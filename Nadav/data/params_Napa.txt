@@ -1,0 +1,10 @@
+minmagnitude	2
+minlatitude	37.9
+maxlatitude	38.5
+minlongitude	-122.6
+maxlongitude	-122
+maxdepth	30
+starttime	2014-08-10
+endtime		2014-09-24
+
+

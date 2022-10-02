@@ -18,7 +18,7 @@ from obspy import read, read_inventory
 from obspy.clients.fdsn import Client
 from obspy.taup import TauPyModel
 from obspy.geodetics import kilometers2degrees as km2deg
-sys.path.append(f'/home/sysop/olmost/TRUAA/')
+sys.path.append(f'/home/{os.getlogin()}/olmost/TRUAA/')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "TRUAA.settings")
 import django
 django.setup()
@@ -311,13 +311,11 @@ def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_
         return None, None
 
 
-def get_traces_full(event_row, time_win, sta_inv):
+def get_traces_full(event_row, time_win):
     """
-    :param client: FDSN client to use to retrieve waveforms
     :param event_row: DataFrame row for EPIC event
     :param time_win: half-length of time window [s]
-    :param sta_inv: station inventory
-    :return: data streamer with all waveforms existing in the .mseed file
+    :return: full path of created .mseed file
     """
     # ________________________________________________________ #
     # event_row: dataframe row for EPIC event
@@ -326,31 +324,91 @@ def get_traces_full(event_row, time_win, sta_inv):
     # sta_inv: station inventory
     # ________________________________________________________ #
     # location for .mseed event files
-    ddir = '/mnt/c/Users/lewiss/Documents/Research/Data/events'
+    ddir = f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/events'
+    # full path of .mseed file
+    mseed = f'{ddir}/{event_row.evt_id}.full.raw.mseed'
     # load .mseed data
-    if path.exists(f'{ddir}/{event_row.evt_id}.full.mseed') == 0:
-        stream = Client('http://172.16.46.102:8181/').get_waveforms('IS,GE', '*', '*', 'HHZ,ENZ',
-                                                                    starttime=UTCDateTime(event_row.evt_time - timedelta(minutes=time_win)),
-                                                                    endtime=UTCDateTime(event_row.evt_time + timedelta(minutes=time_win))).merge()
-        # remove problematic traces
-        y = stream.select(station='KRPN', network='IS')
-        for tr in y:
-            stream.remove(tr)
-        # remove Meiron stations with HHZ channel (not in inventory)
-        for t in stream.select(network='IS', channel='HHZ'):
-            if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
-                stream.remove(t)
-        # remove response from all traces
-        stream.remove_response(output='VEL', inventory=sta_inv)
-        # apply taper to all traces
-        stream.taper(max_percentage=.5, type='cosine', max_length=10., side='left')
-        # remove trend from all traces
-        stream.detrend('spline', order=3, dspline=500)
+    if path.exists(mseed) == 0:
+        stream = Client('http://172.16.46.102:8181/')\
+            .get_waveforms('IS,GE', '*', '*', 'HHZ,ENZ',
+                           starttime=UTCDateTime(event_row.evt_time - timedelta(minutes=time_win)),
+                           endtime=UTCDateTime(event_row.evt_time + timedelta(minutes=time_win))).merge()
         # write miniSEED file
-        stream.write(f'{ddir}/{event_row.evt_id}.full.mseed')
+        stream.write(mseed)
+    return mseed
+
+
+def get_traces_deci(event_row, time_win):
+    """
+    :param event_row: dataframe row for EPIC event
+    :param time_win: half-length of time window
+    :return: full path of created .mseed file
+    """
+    # location for .mseed event files
+    ddir = f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/events'
+    # location for jqdata archive
+    adir = '/net/172.16.46.200/archive/jqdata/archive'
+    # load .mseed data
+    mseed = f'{ddir}/{event_row.evt_id}.deci.raw.mseed'
+    if path.exists(mseed) == 0:
+        if os.getlogin() != 'lewis':
+            # import miniSEED file
+            tbeg = str(datetime.strftime(event_row.evt_time - timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
+            tend = str(datetime.strftime(event_row.evt_time + timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
+            os.system(f'scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed}')
+            if os.path.getsize(mseed) == 0:
+                os.remove(mseed)
+                mseed = ''
+        elif event_row.evt_id != '1008':
+            t1 = str(datetime.strftime(evt.evt_time - timedelta(minutes=twin), '%Y-%m-%d %H:%M:%S'))
+            t2 = str(datetime.strftime(evt.evt_time + timedelta(minutes=twin), '%Y-%m-%d %H:%M:%S'))
+            print('Get .mseed file manually from jplayback:')
+            print(f' scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{t1}~{t2}" '
+                  f'/net/172.16.46.200/archive/jqdata/archive > {mseed.replace(f"{ddir}/", "")}')
+            mseed = ''
+            exit()
     else:
-        # read miniSEED file
-        stream = read(f'{ddir}/{event_row.evt_id}.full.mseed').merge()
+        if os.path.getsize(f'{ddir}/{event_row.evt_id}.deci.raw.mseed') == 0:
+            os.remove(f'{ddir}/{event_row.evt_id}.deci.raw.mseed')
+            mseed = ''
+    return mseed
+
+
+def process_mseed(mseed_in, sta_inv, time_win):
+    """
+    :param mseed_in: full path to .mseed file to process
+    :param sta_inv: station inventory
+    :param time_win: half-length of time window
+    :return: data streamer with event info.
+    """
+    # read raw miniSEED file
+    stream = read(mseed_in)
+    mseed_out = mseed_in.replace('.raw', '')
+    if path.exists(mseed_out) != 0:
+        logger.info(f' Waveform data already processed: {mseed_out}')
+        return mseed_out
+    # remove problematic channels
+    y = stream.select(network='IS', station='KRPN')
+    for tr in y:
+        stream.remove(tr)
+    for tr in stream.select(network='IS', station='EIL', channel='BHZ'):
+        stream.remove(tr)
+    for tr in stream.select(network='IS', station='GEM', channel='BHZ'):
+        stream.remove(tr)
+    for tr in stream.select(network='IS', station='KFSB', channel='HHZ', location='22'):
+        stream.remove(tr)
+    for tr in stream.select(network='IS', station='HRFI', channel='HHZ', location=''):
+        stream.remove(tr)
+    # remove Meiron stations with HHZ channel (not in inventory)
+    for t in stream.select(network='IS', channel='HHZ'):
+        if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
+            stream.remove(t)
+    # remove response from all traces
+    stream.remove_response(output='VEL', inventory=sta_inv)
+    # apply taper to all traces
+    stream.taper(max_percentage=.5, type='cosine', max_length=10., side='left')
+    # remove trend from all traces
+    stream.detrend('spline', order=3, dspline=500)
     # apply channel priorities (HHZ>ENZ) and remove partial traces
     for tr in stream:
         # if HHZ channel, remove all others
@@ -364,82 +422,20 @@ def get_traces_full(event_row, time_win, sta_inv):
                               location=tr.stats.location)
             if y:
                 stream.remove(tr)
-    return stream
+    # write miniSEED file
+    stream.write(mseed_out)
+    return mseed_out
 
 
-def get_traces_deci(event_row, time_win, sta_inv):
-    """
-    :param event_row: dataframe row for EPIC event
-    :param time_win: half-length of time window
-    :param sta_inv: station inventory
-    :return: data streamer with all waveforms existing in the .mseed file [DECIMATED DATA]
-    """
-    # location for .mseed event files
-    ddir = '/mnt/c/Users/lewiss/Documents/Research/Data/events'
-    # location for jqdata archive
-    adir = '/net/jarchive/archive/jqdata/archive'
-    # load .mseed data
-    if path.exists(f'{ddir}/{event_row.evt_id}.deci.mseed') == 0:
-        # import miniSEED file
-        t1 = str(datetime.strftime(event_row.evt_time - timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
-        t2 = str(datetime.strftime(event_row.evt_time + timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
-        os.system(f'scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{t1}~{t2}" {adir} > {ddir}/{event_row.evt_id}.deci.mseed')
-        if os.path.getsize(f'{ddir}/{event_row.evt_id}.deci.mseed') == 0:
-            os.remove(f'{ddir}/{event_row.evt_id}.deci.mseed')
-            return None
-        # read resulting miniSEED file for waveform processing
-        stream = read(f"{ddir}/{event_row.evt_id}.deci.mseed").merge()
-        # remove problematic channels
-        for tr in stream.select(network='IS', station='EIL', channel='BHZ'):
-            stream.remove(tr)
-        for tr in stream.select(network='IS', station='GEM', channel='BHZ'):
-            stream.remove(tr)
-        for tr in stream.select(network='IS', station='KFSB', channel='HHZ', location='22'):
-            stream.remove(tr)
-        for tr in stream.select(network='IS', station='HRFI', channel='HHZ', location=''):
-            stream.remove(tr)
-        # remove Meiron stations with HHZ channel (not in inventory)
-        for t in stream.select(network='IS', channel='HHZ'):
-            if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
-                stream.remove(t)
-        # remove response from all traces
-        stream.remove_response(output='VEL', inventory=sta_inv)
-        # apply taper to all traces
-        stream.taper(max_percentage=.5, type='cosine', max_length=10., side='left')
-        # remove trend from all traces
-        stream.detrend('spline', order=3, dspline=500)
-        # write miniSEED file
-        stream.write(f'{ddir}/{event_row.evt_id}.deci.mseed')
-    else:
-        if os.path.getsize(f'{ddir}/{event_row.evt_id}.deci.mseed') == 0:
-            os.remove(f'{ddir}/{event_row.evt_id}.deci.mseed')
-            return None
-        # read miniSEED file
-        stream = read(f'{ddir}/{event_row.evt_id}.deci.mseed').merge()
-    # apply channel priorities (HHZ>ENZ)
-    for tr in stream:
-        # if HHZ channel, remove all others
-        if tr.stats.channel == 'HHZ':
-            x = stream.select(station=tr.stats.station, network=tr.stats.network, channel='ENZ')
-            if x:
-                stream.remove(x[0])
-    return stream
-
-
-def add_event_data(stream, event_row, station_tab):
-    """
-    :param stream: data streamer to fill with event info.
-    :param event_row: DataFrame row with info. for event of interest
-    :param station_tab: DataFrame with all station info.
-    :return: data streamer with event info.
-    """
+def add_event_data(stream, event_row, sta_inv):
     # calculate distances and theoretical arrival times
     for tr in stream:
         # find station of interest
-        sta = station_tab[station_tab.sta == tr.stats.station]
+        # sta = station_tab[station_tab.sta == tr.stats.station]
+        sta = sta_inv.select(station=tr.stats.station)
         # compute distance from EMSC event
         dist = gdist.distance((event_row.evt_lat.to_list()[0], event_row.evt_lon.to_list()[0]),
-                              (sta.lat.to_list()[0], sta.lon.to_list()[0]))
+                              (sta.networks[0].stations[0].latitude, sta.networks[0].stations[0].longitude))
         tr.stats.distance = dist.m
         # compute theoretical travel times for EMSC event
         if 'evt_dep' in event_row:
@@ -634,7 +630,7 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
     bmap.drawparallels(np.arange(bmap.llcrnrlat, bmap.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     bmap.drawmeridians(np.arange(bmap.llcrnrlon, bmap.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # fault lines (Sharon et al., 2020)
-    f = open('/mnt/c/Users/lewiss/Documents/Research/Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz', 'r')
+    f = open(f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz', 'r')
     flts = f.readlines()
     f.close()
     x = []
@@ -702,7 +698,7 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
 # directories
 src = 'eew-b-jer'
 f_ext = src.split('-')[2].upper() + '-' + src.split('-')[1].upper()
-wdir = f"/mnt/c/Users/lewiss/Documents/Research/EPIC/{f_ext}"
+wdir = f"/home/{os.getlogin()}/GoogleDrive/Research/GSI/EPIC/{f_ext}"
 print(f"Working directory: {wdir}")
 print()
 
@@ -725,21 +721,15 @@ mmin = 3.5  # [MAG]
 # FDSN databases
 tele_client = Client('EMSC')
 # read ISN station inventory
-isn_inv = read_inventory('/mnt/c/Users/lewiss/Documents/Research/Autopicker/inventory.xml')
-stab = pd.DataFrame(
-    {'sta': pd.Series(dtype='string'), 'net': pd.Series(dtype='string'), 'lat': pd.Series(dtype='float64'),
-     'lon': pd.Series(dtype='float64'), 'ele': pd.Series(dtype='float64'), 'site': pd.Series(dtype='string')})
-for ntw in isn_inv.networks:
-    for st in ntw.stations:
-        stab.loc[stab.shape[0]] = [st.code, ntw.code, st.latitude, st.longitude, st.elevation, st.site.name]
-# sort stations alphabetically
-stab = stab.sort_values(by=['sta']).reset_index(drop=True)
+isn_inv = read_inventory(f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Autopicker/inventory.xml')
 # selection area based on ISN distribution for missed events
-sgrd = [min(stab[stab.net == 'IS'].lat) - km2deg(100.), max(stab[stab.net == 'IS'].lat) + km2deg(100.),
-        min(stab[stab.net == 'IS'].lon) - km2deg(100.), max(stab[stab.net == 'IS'].lon) + km2deg(100.)]
+sgrd = [min([st.latitude for st in isn_inv.networks[0].stations]) - km2deg(100.),
+        max([st.latitude for st in isn_inv.networks[0].stations]) + km2deg(100.),
+        min([st.longitude for st in isn_inv.networks[0].stations]) - km2deg(100.),
+        max([st.longitude for st in isn_inv.networks[0].stations]) + km2deg(100.)]
 # variables to loop over months
 m1 = datetime.strptime('Apr 2022', '%b %Y')
-m2 = datetime.strptime('Aug 2022', '%b %Y')
+m2 = datetime.strptime('May 2022', '%b %Y')
 dm = (m2.year - m1.year) * 12 + m2.month - m1.month
 for m in range(dm):
     # time period of interest
@@ -778,6 +768,8 @@ for m in range(dm):
     etab = etab.assign(gsi_id=pd.Series([''] * len(etab), dtype='string'))
     etab = etab.assign(evt_type=pd.Series([''] * len(etab), dtype='string'))
     for i, evt in etab.iterrows():
+        # if evt.evt_id != '1008':
+        #     continue
         gsid = get_cat_event_match(ctab, evt, twin, tlim, rlim, logger)
         etab.loc[i, 'gsi_id'] = (gsid or '')
         if gsid:
@@ -810,13 +802,19 @@ for m in range(dm):
         # build figure if non-existant
         if ifplot and fig and path.exists(fig) == 0:
             # get waveform data
-            isn_traces = get_traces_deci(evt, twin, isn_inv)
-            if not isn_traces:
+            mfile = get_traces_deci(evt, twin)
+            print(f'1: {mfile}')
+            if mfile == '':
                 logger.warning(' No decimated data, retrieving full resolution data')
-                isn_traces = get_traces_full(evt, twin, isn_inv)
+                mfile = get_traces_full(evt, twin)
+                print(f'2: {mfile}')
+            # process waveform data
+            nfile = process_mseed(mfile, isn_inv, twin)
+            print(f'3: {nfile}')
+            isn_traces = read(nfile)
             # add event info (theoretical arrivals & distance) to waveforms
             if 'check' in fig:
-                isn_traces = add_event_data(isn_traces, ctab[ctab.evt_id == gsid], stab)
+                isn_traces = add_event_data(isn_traces, ctab[ctab.evt_id == gsid], isn_inv)
             elif 'false' in fig:
                 if gsid:
                     if evt.evt_id == '829':
@@ -824,10 +822,10 @@ for m in range(dm):
                                              'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [-6.78, 105.36, 40., np.datetime64('2022-01-14 09:05:43.5'), 'TELESEISM']
-                        isn_traces = add_event_data(isn_traces, xevt, stab)
+                        isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'INDONESIA M6.6'
                     else:
-                        isn_traces = add_event_data(isn_traces, ctab[ctab.evt_id == gsid], stab)
+                        isn_traces = add_event_data(isn_traces, ctab[ctab.evt_id == gsid], isn_inv)
                 else:
                     if evt.evt_id == '435':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
@@ -839,34 +837,36 @@ for m in range(dm):
                         # evt_lbl = 'DODECANESE M2.0'
                         # xevt.loc[xevt.shape[0]] = [34.2, 58.21, 10., np.datetime64('2021-03-10 20:30:17.5'), 'REGIONAL']
                         # evt_lbl = 'IRAN M4.7'
-                        isn_traces = add_event_data(isn_traces, xevt, stab)
+                        isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                     elif evt.evt_id == '523':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
                                              'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [37.73, 141.75, 41., np.datetime64('2021-05-13 23:58:14.8'), 'TELESEISM']
-                        isn_traces = add_event_data(isn_traces, xevt, stab)
+                        isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'JAPAN M6.0'
                     elif evt.evt_id == '930':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
                                              'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [-20.38, -178.36, 566., np.datetime64('2022-03-07 05:34:17.1'), 'TELESEISM']
-                        isn_traces = add_event_data(isn_traces, xevt, stab)
+                        isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'FIJI M6.1'
                     elif evt.evt_id == '949':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
                                              'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [37.73, 141.62, 49., np.datetime64('2022-03-16 14:36:32.4'), 'TELESEISM']
-                        isn_traces = add_event_data(isn_traces, xevt, stab)
+                        isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'JAPAN M7.3'
                     else:
-                        isn_traces = add_event_data(isn_traces, etab[etab.evt_id == evt.evt_id], stab)
+                        isn_traces = add_event_data(isn_traces, etab[etab.evt_id == evt.evt_id], isn_inv)
             else:
-                isn_traces = add_event_data(isn_traces, etab[etab.evt_id == evt.evt_id], stab)
+                isn_traces = add_event_data(isn_traces, etab[etab.evt_id == evt.evt_id], isn_inv)
             # get all triggers from database for month of interest
             ttab = get_epic_triggers_db(src, evt.evt_id, evt.evt_ver)
+            if ttab.empty:
+                print(evt.evt_id)
             # indexes sorted according to distance (descending)
             sorted_ind = np.argsort([tr.stats.distance / 1000. for tr in isn_traces])[::-1][:len(isn_traces)]
             # plot record section

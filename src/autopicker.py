@@ -89,8 +89,8 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
     xlim1 = [tmin, max(theo_tab)+50.]
     xlim2 = [-5., 5.]
     # create figure & axis
-    ff, (axis1, axis2, axis3) = plt.subplots(nrows=1, ncols=3, squeeze=True, figsize=(18, 9), dpi=200,
-                                             gridspec_kw={'width_ratios': [2, 1, 1]})
+    fig, (axis1, axis2, axis3) = plt.subplots(nrows=1, ncols=3, squeeze=True, figsize=(18, 9), dpi=200,
+                                              gridspec_kw={'width_ratios': [2, 1, 1]})
     if not fig_name:
         plt.show(block=False)
     # AXIS 1: VELOCITY WAVEFORMS
@@ -143,7 +143,8 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
         if not hand_tab.empty:
             if not hand_tab[(hand_tab.sta == stream[jjj].stats.station)].empty:
                 k_hpic = hand_tab.index[(hand_tab.sta == stream[jjj].stats.station)
-                                        & (hand_tab.net == stream[jjj].stats.network) & (hand_tab.chn == stream[jjj].stats.channel)].to_list()
+                                        & (hand_tab.net == stream[jjj].stats.network)
+                                        & (hand_tab.chn == stream[jjj].stats.channel)].to_list()
                 if len(k_hpic) == 1:
                     k_hpic = k_hpic[0]
                 else:
@@ -151,13 +152,15 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
                 if k_hpic is not None:
                     n_hpic += 1
                     # show on both axes
-                    h3, = axis1.plot([hand_tab.pic[k_hpic], hand_tab.pic[k_hpic]], [n_trace - 1, n_trace + 1], color='orange', label='Handpick')
+                    h3, = axis1.plot([hand_tab.pic[k_hpic], hand_tab.pic[k_hpic]],
+                                     [n_trace - 1, n_trace + 1], color='orange', label='Handpick')
                     axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/25., n_trace, 'o',
                                markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
                     # station name (MAP)
-                    for st in isn_inv.networks[0]:
-                        if stream[jjj].stats.station == st.code:
-                            axis3.plot(st.longitude, st.latitude, 's', markersize=7, color='orange', mfc='none', alpha=.7, label='Autopick')
+                    for station in isn_inv.networks[0]:
+                        if stream[jjj].stats.station == station.code:
+                            axis3.plot(station.longitude, station.latitude, 's',
+                                       markersize=7, color='orange', mfc='none', alpha=.7, label='Autopick')
         # show automatic picks
         k_apic = None
         if not auto_tab.empty:
@@ -185,9 +188,9 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
                     axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/40., n_trace, 'o',
                                markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
                     # station name (MAP)
-                    for st in isn_inv.networks[0]:
-                        if stream[jjj].stats.station == st.code:
-                            axis3.plot(st.longitude, st.latitude, 'o', markersize=7, color='purple', mfc='none', alpha=.7)
+                    for station in isn_inv.networks[0]:
+                        if stream[jjj].stats.station == station.code:
+                            axis3.plot(station.longitude, station.latitude, 'o', markersize=7, color='purple', mfc='none', alpha=.7)
         # residual w.r.t. hand pick (if both exist)
         if k_hpic is not None and k_apic is not None:
             # table for residuals (for statistics)
@@ -258,12 +261,14 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
     hm1 = []
     hm2 = []
     for jjj in ind:
-        for st in isn_inv.networks[0]:
-            if stream[jjj].stats.station == st.code:
+        for station in isn_inv.networks[0]:
+            if stream[jjj].stats.station == station.code:
                 if stream[jjj].stats.network == 'IS':
-                    hm1, = axis3.plot(st.longitude, st.latitude, 'b^', markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
+                    hm1, = axis3.plot(station.longitude, station.latitude, 'b^',
+                                      markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
                 elif stream[jjj].stats.network == 'GE':
-                    hm2, = axis3.plot(st.longitude, st.latitude, 'cs', markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
+                    hm2, = axis3.plot(station.longitude, station.latitude, 'cs',
+                                      markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
     # event
     he, = axis3.plot(evt_param['elon'], evt_param['elat'], 'r*', markersize=10, markeredgecolor='black', label='Event')
     if evt_param['emag']:
@@ -286,7 +291,8 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
     # area of interest
     axis4.plot([mgrd[2]+.5, mgrd[2]+.5, mgrd[3]-.5, mgrd[3]-.5, mgrd[2]+.5], [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], 'r')
     # distance from centre of local map
-    axis4.set_title(f"{gdist.distance((mgrd[0]+(mgrd[1]-mgrd[0])/2., mgrd[2]+(mgrd[3]-mgrd[2])/2.), (evt_param['elat'], evt_param['elon'])).km:.2f} km")
+    axis4.set_title(
+        f"{gdist.distance((mgrd[0]+(mgrd[1]-mgrd[0])/2., mgrd[2]+(mgrd[3]-mgrd[2])/2.), (evt_param['elat'], evt_param['elon'])).km:.2f} km")
     # event
     axis4.plot(evt_param['elon'], evt_param['elat'], 'r*', markersize=10, markeredgecolor='black')
     # figure title
@@ -295,11 +301,11 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
            f"{filt_param['bworder']} / {filt_param['bwminf']:.2f} / {filt_param['bwmaxf']:.2f} [Hz]"
     tit3 = f"STA/LTA: {filt_param['sta']:.2f} / {filt_param['lta']:.2f} [s] " \
            f"\u2013 Trigger: {filt_param['trigon']:.2f} / {filt_param['trigoff']:.2f}"
-    ff.suptitle(tit1 + '\n' + tit2 + '\n' + tit3, fontweight='bold')
+    fig.suptitle(tit1 + '\n' + tit2 + '\n' + tit3, fontweight='bold')
     # maximise figure
     plt.get_current_fig_manager().full_screen_toggle()
     # adjust plots
-    ff.subplots_adjust(left=.07, right=.98, wspace=.1)
+    fig.subplots_adjust(left=.07, right=.98, wspace=.1)
     # show or save figure
     if fig_name:
         plt.savefig(fig_name, bbox_inches='tight', dpi='figure')
@@ -331,8 +337,8 @@ mgrd = [29., 34., 33., 37.]
 rgrd = [23., 43., 25., 45.]
 
 # working directory
-wdir = '/mnt/c/Users/lewiss/Documents/Research/Autopicker'
-mpl.rcParams['savefig.directory'] = f"{wdir}/fig"
+wdir = '/home/lewis/GoogleDrive/Research/GSI/Autopicker'
+mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
 adir = '/net/jarchive/archive/jqdata/archive'
 # input data
@@ -340,7 +346,7 @@ idat = '01-06-2021_01-06-2022_M3'
 
 # FDSN database
 # isn_client = Client('http://172.16.46.102:8181/')       # jfdsn
-# isn_client = Client('http://172.16.46.140:8181/')       # jtfdsn
+isn_client = Client('http://172.16.46.140:8181/')       # jtfdsn
 
 # initialising TauP
 vel_mod = 'gitt05'
@@ -596,8 +602,8 @@ if if_res:
             e = datetime.strftime(datetime.strptime(x[0] + ' ' + x[1], '%d/%m/%Y %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
             apar = [float(k) for k in x[6:]]
             # check input parameters
-            if e != evt or apar[0] != rmhp[j] or apar[1] != taper[j] or apar[2] != bworder[j] or apar[3] != bwminf[j] or apar[4] != bwmaxf[j] \
-                    or apar[5] != sta[j] or apar[6] != lta[j] or apar[7] != trigon[j] or apar[8] != trigoff[j]:
+            if e != evt or apar[0] != rmhp[j] or apar[1] != taper[j] or apar[2] != bworder[j] or apar[3] != bwminf[j] \
+                    or apar[4] != bwmaxf[j] or apar[5] != sta[j] or apar[6] != lta[j] or apar[7] != trigon[j] or apar[8] != trigoff[j]:
                 print(f" Check input parameters for {evt}")
             else:
                 n_pic = 0
@@ -633,10 +639,10 @@ if if_res:
         if j == 3:
             ax = ax4
         # choose which data to plot
-        pdif = dict(hdif)
-        ff.suptitle('Comparison with catalogue picks', fontweight='bold')
-        # pdif = dict(tdif)
-        # ff.suptitle('Comparison with theoretical picks', fontweight='bold')
+        # pdif = dict(hdif)
+        # ff.suptitle('Comparison with catalogue picks', fontweight='bold')
+        pdif = dict(tdif)
+        ff.suptitle('Comparison with theoretical picks', fontweight='bold')
         print(f" {len(pdif)} events to plot")
         # count number of data for each event
         nn = [len(tdif[e]) if tdif[e] is not None else 0 for e in xevt]
@@ -782,7 +788,8 @@ for i in range(len(etab)):
     else:
         atab = read_autopick_xml(f"{wdir}/{idat}/{oxml}", epar, 'P', '')
     # remove problematic channels
-    atab = atab.drop(atab[(atab.net == 'IS') & (atab.chn == 'BHZ') & ((atab.sta == 'EIL') | (atab.sta == 'GEM'))].index).reset_index(drop=True)
+    atab = atab.drop(atab[(atab.net == 'IS') & (atab.chn == 'BHZ') &
+                          ((atab.sta == 'EIL') | (atab.sta == 'GEM'))].index).reset_index(drop=True)
     if len(atab) < 2:
         print(' Not enough automatic picks')
         print()

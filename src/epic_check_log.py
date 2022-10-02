@@ -695,7 +695,7 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
         plt.show()
 
 
-print('Hello one last time Lewis')
+print('Hello one more time Lewis')
 # directories
 src = 'eew-b-jer'
 f_ext = src.split('-')[2].upper() + '-' + src.split('-')[1].upper()

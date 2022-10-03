@@ -1,8 +1,8 @@
 ########################################################################################################################
-import xml.etree.ElementTree as ETree
 import os
-from os import path
 import re
+import pwd
+from os import path
 import matplotlib.pyplot as plt
 import matplotlib as mpl
 import geopy.distance as gdist
@@ -12,12 +12,40 @@ import pandas as pd
 import numpy as np
 import statistics
 from scipy import signal
-from datetime import datetime
-from datetime import timedelta
+from datetime import datetime, timedelta
+import xml.etree.ElementTree as ETree
 from obspy import read, read_inventory
 from obspy.core import UTCDateTime
 from obspy.clients.fdsn import Client
 from obspy.taup import TauPyModel
+
+# retrieve username
+user_name = pwd.getpwuid(os.getuid())[0]
+
+
+def get_traces_deci(evt_id, ori_time, time_win):
+    """
+    :param evt_id: event ID
+    :param ori_time: event origin time
+    :param time_win: half-length of time window
+    :return: full path of created .mseed file
+    """
+    # load .mseed data
+    mseed = f'{wdir}/{idat}/{evt_id}.deci.raw.mseed'
+    if path.exists(mseed) == 0:
+        if user_name != 'lewis':
+            # import miniSEED file
+            tbeg = str(datetime.strftime(ori_time - time_win, '%Y-%m-%d %H:%M:%S'))
+            tend = str(datetime.strftime(ori_time + time_win, '%Y-%m-%d %H:%M:%S'))
+            os.system(f'scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed}')
+            if os.path.getsize(mseed) == 0:
+                os.remove(mseed)
+                mseed = ''
+    else:
+        if os.path.getsize(f'{wdir}/{idat}/{evt_id}.deci.raw.mseed') == 0:
+            os.remove(f'{wdir}/{idat}/{evt_id}.deci.raw.mseed')
+            mseed = ''
+    return mseed
 
 
 def read_autopick_xml(file_path, evt_dict, phase=None, picker=None):
@@ -317,14 +345,6 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
 
 ########################################################################################################################
 # input parameters
-# selected events
-# evt = '20210208205947606'         # M2.0
-# evt = '20210126194914826'         # M2.0
-# evt = '20210122064437843'         # M2.2
-# evt = '20210717101444540'         # M2.3
-# evt = '20210628231231690'         # M2.5
-# evt = '20210511125045570'         # M3.1
-# evt = '20210615230854375'         # M4.1
 exp = 0
 ntw = 'GE, IS'
 chn = '(B|H|E)(H|N)Z'
@@ -337,7 +357,7 @@ mgrd = [29., 34., 33., 37.]
 rgrd = [23., 43., 25., 45.]
 
 # working directory
-wdir = '/home/lewis/GoogleDrive/Research/GSI/Autopicker'
+wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
 mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
 adir = '/net/jarchive/archive/jqdata/archive'
@@ -403,19 +423,7 @@ print()
 #         lwin = 10.0
 #     fpar['sta'] = swin
 #     fpar['lta'] = lwin
-
-# retrieve station inventory
-if path.exists(f"{wdir}/inventory.xml") != 0:
-    print('ISN inventory file already exists:')
-    os.system(f"ls -lh {wdir}/inventory.xml")
-    print()
-else:
-    isn_inv = isn_client.get_stations(network=ntw, channel='ENZ, HHZ, BHZ', level='response')
-    isn_inv.write('%s/inventory.xml' % wdir, level='response', format='STATIONXML')
-# read station inventory
-isn_inv = read_inventory(f"{wdir}/inventory.xml", format='STATIONXML')
-# isn_inv_new = read_inventory("{wdir}/Autopicker/inventory_sc.xml", format='STATIONXML')
-
+#
 # # import station inventory (SEISCOMP)
 # if path.exists('%s/inventory_sc.xml' % (wdir)) != 0:
 #     print('ISN inventory file already exists:')
@@ -426,6 +434,17 @@ isn_inv = read_inventory(f"{wdir}/inventory.xml", format='STATIONXML')
 #     print(cmd)
 #     print()
 #     os.system(cmd)
+
+# retrieve station inventory
+if path.exists(f"{wdir}/inventory.xml") != 0:
+    print('ISN inventory file already exists:')
+    os.system(f"ls -lh {wdir}/inventory.xml")
+    print()
+else:
+    isn_inv = isn_client.get_stations(network=ntw, channel='ENZ, HHZ, BHZ', level='response')
+    isn_inv.write(f'{wdir}/inventory.xml', level='response', format='STATIONXML')
+# read station inventory
+isn_inv = read_inventory(f"{wdir}/inventory.xml", format='STATIONXML')
 
 # read M>3.0 events from FDSNws for period June 2021 - June 2022
 etab = pd.read_csv(f"{wdir}/{idat}.csv", parse_dates=['OriginTime'])
@@ -550,7 +569,7 @@ if if_yes:
 
 ########################################################################################################################
 # AUTOPICKER RESULTS SUMMARY
-if_res = True
+if_res = False
 if if_res:
     # INITIALISE FIGURE
     XLim = [-10., 10.]
@@ -681,8 +700,15 @@ if if_res:
     plt.show()
     exit()
 
+twin = timedelta(hours=5)
 # loop over events
 for i in range(len(etab)):
+    # define file extension based on time window length
+    ext = ''
+    if twin == timedelta(minutes=5):
+        ext = '10m'
+    elif twin == timedelta(hours=5):
+        ext = '10h'
     # read event parameters
     evt = datetime.strftime(datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
     # if evt != '20220216032228454':
@@ -692,39 +718,29 @@ for i in range(len(etab)):
     print(f"{evt} M{epar['emag']:3.1f}")
     # check whether figure and output file already exist or not
     if pic == 'AIC':
-        oxml = f"{evt}_{exp}_AIC.xml"
+        oxml = f"{evt}_{exp}_AIC.{ext}.xml"
     else:
-        oxml = f"{evt}_{exp}.xml"
+        oxml = f"{evt}_{exp}.{ext}.xml"
     if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") != 0 and \
             path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") != 0:
         print()
         continue
     # starting and ending times
-    tbeg = datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f') - timedelta(minutes=5)
-    tend = datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f') + timedelta(minutes=5)
-    print(f" Time window: {tbeg.strftime('%d/%m/%Y %H:%M:%S.%f')} \u2013 {tend.strftime('%d/%m/%Y %H:%M:%S.%f')}")
+    print(f" Time window: {datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f') - twin} \u2013 "
+          f"{datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f') + twin}")
 
     #######################################################################################################################
     # RETRIEVE RAW MINISEED DATA
-    if path.exists(f"{wdir}/{idat}/{evt}.mseed") == 0:
+    if path.exists(f"{wdir}/{idat}/{evt}.{ext}.mseed") == 0:
+        mfile = get_traces_deci(evt, datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), twin)
+        print(mfile)
+        exit()
         # import miniSEED file
         t1 = str(datetime.strftime(tbeg, '%Y-%m-%d %H:%M:%S'))
         t2 = str(datetime.strftime(tend, '%Y-%m-%d %H:%M:%S'))
-        cmd1 = f'scart -dsE -n "{ntw}" -c "{chn}" -t "{t1}Z~{t2}Z" {adir} > {wdir}/v1.mseed'
-        print(' ' + cmd1)
-        os.system(cmd1)
-        # repack miniSEED file
-        cmd2 = f"msrepack -R 512 -i -a {wdir}/v1.mseed -o {wdir}/v2.mseed"
-        print(' ' + cmd2)
-        os.system(cmd2)
-        # sort miniSEED file
-        cmd3 = f"scmssort -uE {wdir}/v2.mseed > {wdir}/{idat}/{evt}.mseed"
-        print(' ' + cmd3)
-        os.system(cmd3)
-        # clean up
-        os.system(f"rm {wdir}/v?.mseed")
+        os.system(f'scart -dsE -n "{ntw}" -c "{chn}" -t "{t1}Z~{t2}Z" {adir} > {wdir}/{idat}/{evt}.{ext}.mseed')
         # read resulting miniSEED file for waveform processing
-        isn_traces = read(f"{wdir}/{idat}/{evt}.mseed").merge()
+        isn_traces = read(f"{wdir}/{idat}/{evt}.{ext}.mseed").merge()
         # remove problematic channels
         for t in isn_traces.select(network='IS', station='EIL', channel='BHZ'):
             isn_traces.remove(t)
@@ -758,7 +774,7 @@ for i in range(len(etab)):
         # apply Butterworth band-pass filter to all traces
         isn_traces.filter('bandpass', freqmin=bwminf[exp], freqmax=bwmaxf[exp], corners=bworder[exp])
         # write miniSEED file
-        isn_traces.write(f"{wdir}/{idat}/{evt}.mseed")
+        isn_traces.write(f"{wdir}/{idat}/{evt}.{ext}.mseed")
     else:
         print(' MiniSEED data for event %s already exists:' % evt)
         os.system(f"ls -lh {wdir}/{idat}/{evt}.mseed")

@@ -362,11 +362,10 @@ def get_traces_deci(event_row, time_win):
                 os.remove(mseed)
                 mseed = ''
         elif event_row.evt_id != '1008':
-            t1 = str(datetime.strftime(evt.evt_time - timedelta(minutes=twin), '%Y-%m-%d %H:%M:%S'))
-            t2 = str(datetime.strftime(evt.evt_time + timedelta(minutes=twin), '%Y-%m-%d %H:%M:%S'))
+            tbeg = str(datetime.strftime(event_row.evt_time - timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
+            tend = str(datetime.strftime(event_row.evt_time + timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
             print('Get .mseed file manually from jplayback:')
-            print(f' scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{t1}~{t2}" '
-                  f'/net/172.16.46.200/archive/jqdata/archive > {mseed.replace(f"{ddir}/", "")}')
+            print(f' scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed.replace(f"{ddir}/", "")}')
             mseed = ''
             exit()
     else:

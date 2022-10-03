@@ -1,6 +1,7 @@
 ########################################################################################################################
 import os
 import sys
+import pwd
 import re
 import logging
 from os import path
@@ -18,7 +19,8 @@ from obspy import read, read_inventory
 from obspy.clients.fdsn import Client
 from obspy.taup import TauPyModel
 from obspy.geodetics import kilometers2degrees as km2deg
-sys.path.append(f'/home/{os.getlogin()}/olmost/TRUAA/')
+user_name = pwd.getpwuid(os.getuid())[0]
+sys.path.append(f'/home/{user_name}/olmost/TRUAA/')
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "TRUAA.settings")
 import django
 django.setup()
@@ -324,7 +326,7 @@ def get_traces_full(event_row, time_win):
     # sta_inv: station inventory
     # ________________________________________________________ #
     # location for .mseed event files
-    ddir = f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/events'
+    ddir = f'/home/{user_name}/GoogleDrive/Research/GSI/Data/events'
     # full path of .mseed file
     mseed = f'{ddir}/{event_row.evt_id}.full.raw.mseed'
     # load .mseed data
@@ -345,13 +347,13 @@ def get_traces_deci(event_row, time_win):
     :return: full path of created .mseed file
     """
     # location for .mseed event files
-    ddir = f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/events'
+    ddir = f'/home/{user_name}/GoogleDrive/Research/GSI/Data/events'
     # location for jqdata archive
     adir = '/net/172.16.46.200/archive/jqdata/archive'
     # load .mseed data
     mseed = f'{ddir}/{event_row.evt_id}.deci.raw.mseed'
     if path.exists(mseed) == 0:
-        if os.getlogin() != 'lewis':
+        if user_name != 'lewis':
             # import miniSEED file
             tbeg = str(datetime.strftime(event_row.evt_time - timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
             tend = str(datetime.strftime(event_row.evt_time + timedelta(minutes=time_win), '%Y-%m-%d %H:%M:%S'))
@@ -428,6 +430,12 @@ def process_mseed(mseed_in, sta_inv, time_win):
 
 
 def add_event_data(stream, event_row, sta_inv):
+    """
+    :param stream: data streamer of waveforms to plot
+    :param event_row: DataFrame row for EPIC event
+    :param sta_inv: station inventory
+    :return: data streamer of waveforms with event data
+    """
     # calculate distances and theoretical arrival times
     for tr in stream:
         # find station of interest
@@ -630,7 +638,7 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
     bmap.drawparallels(np.arange(bmap.llcrnrlat, bmap.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     bmap.drawmeridians(np.arange(bmap.llcrnrlon, bmap.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # fault lines (Sharon et al., 2020)
-    f = open(f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz', 'r')
+    f = open(f'/home/{user_name}/GoogleDrive/Research/GSI/Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz', 'r')
     flts = f.readlines()
     f.close()
     x = []
@@ -695,11 +703,10 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
         plt.show()
 
 
-print('Hello one more time Lewis')
 # directories
 src = 'eew-b-jer'
 f_ext = src.split('-')[2].upper() + '-' + src.split('-')[1].upper()
-wdir = f"/home/{os.getlogin()}/GoogleDrive/Research/GSI/EPIC/{f_ext}"
+wdir = f"/home/{user_name}/GoogleDrive/Research/GSI/EPIC/{f_ext}"
 print(f"Working directory: {wdir}")
 print()
 
@@ -722,7 +729,7 @@ mmin = 3.5  # [MAG]
 # FDSN databases
 tele_client = Client('EMSC')
 # read ISN station inventory
-isn_inv = read_inventory(f'/home/{os.getlogin()}/GoogleDrive/Research/GSI/Autopicker/inventory.xml')
+isn_inv = read_inventory(f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker/inventory.xml')
 # selection area based on ISN distribution for missed events
 sgrd = [min([st.latitude for st in isn_inv.networks[0].stations]) - km2deg(100.),
         max([st.latitude for st in isn_inv.networks[0].stations]) + km2deg(100.),

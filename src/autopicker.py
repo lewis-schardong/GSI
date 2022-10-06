@@ -30,22 +30,236 @@ def get_traces_deci(evt_id, ori_time, time_win):
     :param time_win: half-length of time window
     :return: full path of created .mseed file
     """
+    # define file extension based on time window length
+    f_ext = ''
+    if twin == timedelta(minutes=5):
+        f_ext = '10m'
+    elif twin == timedelta(hours=5):
+        f_ext = '10h'
     # load .mseed data
-    mseed = f'{wdir}/{idat}/{evt_id}.deci.raw.mseed'
+    mseed = f'{wdir}/{idat}/{evt_id}.{f_ext}.raw.mseed'
     if path.exists(mseed) == 0:
         if user_name != 'lewis':
             # import miniSEED file
             tbeg = str(datetime.strftime(ori_time - time_win, '%Y-%m-%d %H:%M:%S'))
             tend = str(datetime.strftime(ori_time + time_win, '%Y-%m-%d %H:%M:%S'))
-            os.system(f'scart -dsE -n "IS, GE" -c "(H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed}')
+            os.system(f'scart -dsE -n "IS" -c "(B|H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed}')
             if os.path.getsize(mseed) == 0:
                 os.remove(mseed)
                 mseed = ''
     else:
-        if os.path.getsize(f'{wdir}/{idat}/{evt_id}.deci.raw.mseed') == 0:
-            os.remove(f'{wdir}/{idat}/{evt_id}.deci.raw.mseed')
+        if os.path.getsize(mseed) == 0:
+            os.remove(mseed)
             mseed = ''
     return mseed
+
+
+def process_mseed(mseed_in, sta_inv, filt_param):
+    """
+    :param mseed_in: full path to .mseed file to process
+    :param sta_inv: station inventory
+    :param filt_param: dictionary containing filter parameters
+    :return: data streamer with event info.
+    """
+    # read raw miniSEED file
+    stream = read(mseed_in)
+    mseed_out = mseed_in.replace('.raw', '')
+    if path.exists(mseed_out) != 0:
+        print(f' Waveform data already processed: {mseed_out}')
+        return mseed_out
+    # remove problematic channels
+    y = stream.select(network='IS', station='KRPN')
+    for t in y:
+        stream.remove(t)
+    for t in stream.select(network='IS', station='EIL', channel='BHZ'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='GEM', channel='BHZ'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='KFSB', channel='HHZ', location='22'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='HRFI', channel='HHZ', location=''):
+        stream.remove(t)
+    # remove Meiron stations with HHZ channel (not in inventory)
+    for t in stream.select(network='IS', channel='HHZ'):
+        if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
+            stream.remove(t)
+    # remove response from all traces
+    try:
+        stream.remove_response(output='VEL', inventory=sta_inv)
+    except:
+        for t in stream:
+            print(f'{t.stats.network}.{t.stats.station}.{t.stats.location}.{t.stats.channel}')
+            t.remove_response(output='VEL', inventory=sta_inv)
+            exit()
+    # apply taper to all traces
+    stream.taper(max_percentage=.5, type='cosine', max_length=filt_param['taper'], side='left')
+    # apply high-pass filter to all traces
+    stream.filter('highpass', freq=1./filt_param['rmhp'])
+    # remove trend from all traces
+    stream.detrend('spline', order=3, dspline=500)
+    # apply Butterworth band-pass filter to all traces
+    stream.filter('bandpass', freqmin=filt_param['bwminf'], freqmax=filt_param['bwmaxf'], corners=filt_param['bworder'])
+    # write miniSEED file
+    stream.write(mseed_out)
+    return mseed_out
+
+
+def add_event_data(stream, auto_tab, hand_tab, event_par, sta_inv):
+    """
+    :param stream: data streamer of waveforms to process
+    :param auto_tab: DataFrame containing all automatic picks
+    :param hand_tab: DataFrame containing all hand picks
+    :param event_par: dictionary containing event parameters
+    :param sta_inv: .xml inventory containing all station info.
+    :return: data streamer with event info.
+    """
+    # array initialisation for common arrivals (hand/auto)
+    res_tab = pd.DataFrame({'net': pd.Series(dtype='string'), 'sta': pd.Series(dtype='string'), 'loc': pd.Series(dtype='string'),
+                            'chn': pd.Series(dtype='string'), 'dis': pd.Series(dtype='float64'), 'harr': pd.Series(dtype='float64'),
+                            'aarr': pd.Series(dtype='float64'), 'tarr': pd.Series(dtype='float64')})
+    # traces to delete
+    to_del = []
+    nr = 0
+    k = 0
+    while k < len(stream):
+        # selection of best available channel
+        lst = stream.select(station=stream[k].stats.station)
+        ss = None
+        if len(lst) > 1:
+            # in case multiple channels available
+            pp = None
+            jp = None
+            # in case pick exists
+            if not auto_tab[auto_tab.sta == stream[k].stats.station].empty:
+                jj = auto_tab.index[auto_tab.sta == stream[k].stats.station].to_list()
+                if len(jj) > 1:
+                    # in case several picks exist, test each acceptable option (ranked with decreasing priority)
+                    for jjj in jj:
+                        if pp is None and auto_tab.net[jjj] == 'IS' and auto_tab.chn[jjj] == 'HHZ':
+                            pp = 1
+                            jp = jjj
+                        if pp is None and auto_tab.net[jjj] == 'GE' and auto_tab.chn[jjj] == 'HHZ':
+                            pp = 1
+                            jp = jjj
+                        if pp is None and auto_tab.net[jjj] == 'IS' and auto_tab.chn[jjj] == 'BHZ':
+                            pp = 1
+                            jp = jjj
+                        if pp is None and auto_tab.net[jjj] == 'GE' and auto_tab.chn[jjj] == 'BHZ':
+                            pp = 1
+                            jp = jjj
+                        if pp is None and auto_tab.net[jjj] == 'IS' and auto_tab.chn[jjj] == 'ENZ':
+                            pp = 1
+                            jp = jjj
+                        if pp is None and auto_tab.net[jjj] == 'GE' and auto_tab.chn[jjj] == 'ENZ':
+                            pp = 1
+                            jp = jjj
+            if not ss or ss is None:
+                if pp is not None:
+                    ss = lst.select(station=auto_tab.sta[jp], network=auto_tab.net[jp], channel=auto_tab.chn[jp])
+                else:
+                    # if no pick, and in case several available channels, test each acceptable option (ranked with decreasing priority)
+                    s1 = lst.select(station=stream[k].stats.station, network='IS', channel='HHZ')
+                    if s1:
+                        ss = s1
+                    s2 = lst.select(station=stream[k].stats.station, network='GE', channel='HHZ')
+                    if not s1 and s2:
+                        ss = s2
+                    s3 = lst.select(station=stream[k].stats.station, network='IS', channel='BHZ')
+                    if not s1 and not s2 and s3:
+                        ss = s3
+                    s4 = lst.select(station=stream[k].stats.station, network='GE', channel='BHZ')
+                    if not s1 and not s2 and not s3 and s4:
+                        ss = s4
+                    s5 = lst.select(station=stream[k].stats.station, network='IS', channel='ENZ')
+                    if not s1 and not s2 and not s3 and not s4 and s5:
+                        ss = s5
+                    s6 = lst.select(station=stream[k].stats.station, network='GE', channel='ENZ')
+                    if not s1 and not s2 and not s3 and not s4 and not s5 and s6:
+                        ss = s6
+            # remove unselected channels (only getting here if >1 channels)
+            for item in lst:
+                if item != ss[0]:
+                    # isn_traces.remove(item)
+                    to_del.append(item)
+        elif len(lst) == 0:
+            # print(' Not in stream')
+            k += 1
+            continue
+        # find station in inventory
+        station = sta_inv.select(network=stream[k].stats.network, station=stream[k].stats.station,
+                                 channel=stream[k].stats.channel, location=stream[k].stats.location)
+        if len(station) == 0:
+            to_del.append(stream[k])
+            k += 1
+            continue
+        elif len(station) > 1:
+            print(f" Multiple matches in station inventory: {stream[k].stats.station}")
+            return None, None
+        # calculate event-station distance
+        dis = gdist.distance((event_par['elat'], event_par['elon']), (station[0].stations[0].channels[0].latitude, station[0].stations[0].channels[0].longitude))
+        stream[k].stats.distance = dis.m
+        # compute theoretical travel times
+        tt_theo = model.get_travel_times(source_depth_in_km=event_par['edep'], distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
+                                         phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
+        if len(tt_theo) != 0:
+            stream[k].stats['theo_tt'] = tt_theo[0].time
+        else:
+            stream[k].stats['theo_tt'] = np.nan
+        # selection of picks for statistics and output file
+        kh = None
+        # hand picks
+        if len(hand_tab) > 0:
+            if not hand_tab[(hand_tab.sta == stream[k].stats.station)].empty:
+                kh = hand_tab.index[(hand_tab.sta == stream[k].stats.station) &
+                                    (hand_tab.net == stream[k].stats.network) & (hand_tab.chn == stream[k].stats.channel)].to_list()
+                if len(kh) == 1:
+                    kh = kh[0]
+                elif len(kh) > 1:
+                    print(' Multiple results in hand picks')
+                    return None, None
+                else:
+                    # print(' No result in hand picks')
+                    k += 1
+                    continue
+        ka = None
+        # automatic picks
+        if not auto_tab.empty:
+            if not auto_tab[(auto_tab.sta == stream[k].stats.station)].empty:
+                # indexing
+                tab = auto_tab[(auto_tab.sta == stream[k].stats.station) &
+                               (auto_tab.net == stream[k].stats.network) & (auto_tab.chn == stream[k].stats.channel)]
+                tab = tab.assign(tdif=pd.Series([None] * len(tab), dtype='float'))
+                if tab.empty:
+                    k += 1
+                    continue
+                if len(tab) > 1:
+                    ka = None
+                    # find pick closest to theoretical arrival
+                    tab['tdif'] = [abs(xx - tt_theo[0].time) for xx in tab.pic.to_list()]
+                    for jj in tab.index:
+                        if tab.pic[jj] > 0 and jj == tab['tdif'].idxmin():
+                            ka = jj
+                            break
+                else:
+                    ka = tab.index[0]
+        # table for residuals (for statistics)
+        if kh is not None and ka is not None:
+            res_tab.loc[res_tab.shape[0]] = [stream[k].stats.network, stream[k].stats.station, stream[k].stats.location,
+                                             stream[k].stats.channel, stream[k].stats.distance/1000.,
+                                             hand_tab.pic[kh], auto_tab.pic[ka], stream[k].stats.theo_tt]
+            nr += 1
+        elif kh is None and ka is not None:
+            res_tab.loc[res_tab.shape[0]] = [stream[k].stats.network, stream[k].stats.station, stream[k].stats.location,
+                                             stream[k].stats.channel, stream[k].stats.distance/1000.,
+                                             np.nan, auto_tab.pic[ka], stream[k].stats.theo_tt]
+        k += 1
+    # delete selected waveforms
+    for t in to_del:
+        try:
+            stream.remove(t)
+        except:
+            continue
+    return res_tab, stream
 
 
 def read_autopick_xml(file_path, evt_dict, phase=None, picker=None):
@@ -99,7 +313,28 @@ def read_autopick_xml(file_path, evt_dict, phase=None, picker=None):
     return ptab
 
 
-def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=None, fig_name=None):
+def get_cat_picks(evt_id):
+    evt_lst = isn_client.get_events(eventid=evt_id, includearrivals=True)[0]
+    n = 0
+    hand_tab = pd.DataFrame({'net': pd.Series(dtype='string'), 'sta': pd.Series(dtype='string'), 'loc': pd.Series(dtype='string'),
+                             'chn': pd.Series(dtype='string'), 'pha': pd.Series(dtype='string'), 'pic': pd.Series(dtype='float64')})
+    for pik in evt_lst.picks:
+        if pik.phase_hint[0] == 'S':
+            continue
+        if pik.waveform_id.location_code is None:
+            hand_tab.loc[hand_tab.shape[0]] = [pik.waveform_id.network_code, pik.waveform_id.station_code, '',
+                                               pik.waveform_id.channel_code, pik.phase_hint, pik.time -
+                                               evt_lst.preferred_origin().time]
+        else:
+            hand_tab.loc[hand_tab.shape[0]] = [pik.waveform_id.network_code, pik.waveform_id.station_code,
+                                               pik.waveform_id.location_code, pik.waveform_id.channel_code,
+                                               pik.phase_hint, pik.time - evt_lst.preferred_origin().time]
+        n += 1
+    print(f" {n} hand picks")
+    return hand_tab
+
+
+def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, stn_inv, filt_param, index=None, fig_name=None):
     # ________________________________________________________ #
     # stream: data streamer
     # evt_ot: event origin time to use as reference (UTCDateTime)
@@ -185,7 +420,7 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
                     axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/25., n_trace, 'o',
                                markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
                     # station name (MAP)
-                    for station in isn_inv.networks[0]:
+                    for station in stn_inv.networks[0]:
                         if stream[jjj].stats.station == station.code:
                             axis3.plot(station.longitude, station.latitude, 's',
                                        markersize=7, color='orange', mfc='none', alpha=.7, label='Autopick')
@@ -199,7 +434,7 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
                 temp_tab = temp_tab.assign(tdif=pd.Series([None] * len(temp_tab), dtype='float'))
                 if temp_tab.empty:
                     continue
-                if len(tab) > 1:
+                if len(temp_tab) > 1:
                     k_apic = None
                     # find pick closest to theoretical arrival
                     temp_tab['tdif'] = [abs(xx - stream[jjj].stats.theo_tt) for xx in temp_tab.pic.to_list()]
@@ -216,7 +451,7 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
                     axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/40., n_trace, 'o',
                                markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
                     # station name (MAP)
-                    for station in isn_inv.networks[0]:
+                    for station in stn_inv.networks[0]:
                         if stream[jjj].stats.station == station.code:
                             axis3.plot(station.longitude, station.latitude, 'o', markersize=7, color='purple', mfc='none', alpha=.7)
         # residual w.r.t. hand pick (if both exist)
@@ -289,7 +524,7 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
     hm1 = []
     hm2 = []
     for jjj in ind:
-        for station in isn_inv.networks[0]:
+        for station in stn_inv.networks[0]:
             if stream[jjj].stats.station == station.code:
                 if stream[jjj].stats.network == 'IS':
                     hm1, = axis3.plot(station.longitude, station.latitude, 'b^',
@@ -346,7 +581,7 @@ def plot_autopick_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=N
 ########################################################################################################################
 # input parameters
 exp = 0
-ntw = 'GE, IS'
+ntw = 'IS'
 chn = '(B|H|E)(H|N)Z'
 pic = 'AIC'
 
@@ -357,7 +592,8 @@ mgrd = [29., 34., 33., 37.]
 rgrd = [23., 43., 25., 45.]
 
 # working directory
-wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
+# wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
+wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker'
 mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
 adir = '/net/jarchive/archive/jqdata/archive'
@@ -700,6 +936,9 @@ if if_res:
     plt.show()
     exit()
 
+# event experiments
+# twin = timedelta(minutes=5)
+# half a day-long experiments
 twin = timedelta(hours=5)
 # loop over events
 for i in range(len(etab)):
@@ -730,60 +969,16 @@ for i in range(len(etab)):
           f"{datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f') + twin}")
 
     #######################################################################################################################
-    # RETRIEVE RAW MINISEED DATA
-    if path.exists(f"{wdir}/{idat}/{evt}.{ext}.mseed") == 0:
-        mfile = get_traces_deci(evt, datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), twin)
-        print(mfile)
-        exit()
-        # import miniSEED file
-        t1 = str(datetime.strftime(tbeg, '%Y-%m-%d %H:%M:%S'))
-        t2 = str(datetime.strftime(tend, '%Y-%m-%d %H:%M:%S'))
-        os.system(f'scart -dsE -n "{ntw}" -c "{chn}" -t "{t1}Z~{t2}Z" {adir} > {wdir}/{idat}/{evt}.{ext}.mseed')
-        # read resulting miniSEED file for waveform processing
-        isn_traces = read(f"{wdir}/{idat}/{evt}.{ext}.mseed").merge()
-        # remove problematic channels
-        for t in isn_traces.select(network='IS', station='EIL', channel='BHZ'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='IS', station='GEM', channel='BHZ'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='IS', station='KFSB', channel='HHZ', location='22'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='IS', station='HRFI', channel='HHZ', location=''):
-            isn_traces.remove(t)
-        # remove far away stations from streamer
-        for t in isn_traces.select(network='GE', station='CSS'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='GE', station='ISP'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='GE', station='APE'):
-            isn_traces.remove(t)
-        for t in isn_traces.select(network='GE', station='ARPR'):
-            isn_traces.remove(t)
-        # remove Meiron stations with HHZ channel (not in inventory)
-        for t in isn_traces.select(network='IS', channel='HHZ'):
-            if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
-                isn_traces.remove(t)
-        # remove response from all traces
-        isn_traces.remove_response(output='VEL', inventory=isn_inv)
-        # apply taper to all traces
-        isn_traces.taper(max_percentage=.5, type='cosine', max_length=taper[exp], side='left')
-        # apply high-pass filter to all traces
-        isn_traces.filter('highpass', freq=1./rmhp[exp])
-        # remove trend from all traces
-        isn_traces.detrend('spline', order=3, dspline=500)
-        # apply Butterworth band-pass filter to all traces
-        isn_traces.filter('bandpass', freqmin=bwminf[exp], freqmax=bwmaxf[exp], corners=bworder[exp])
-        # write miniSEED file
-        isn_traces.write(f"{wdir}/{idat}/{evt}.{ext}.mseed")
-    else:
-        print(' MiniSEED data for event %s already exists:' % evt)
-        os.system(f"ls -lh {wdir}/{idat}/{evt}.mseed")
+    # RETRIEVE WAVEFORM DATA
+    # retrieve raw .mseed data
+    mfile = get_traces_deci(evt, datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), twin)
+    print(mfile)
+    # process raw .mseed data
+    nfile = process_mseed(mfile, isn_inv, fpar)
+    print(nfile)
+    exit()
     # read miniSEED file
-    isn_traces = read(f"{wdir}/{idat}/{evt}.mseed").merge()
-    if len(isn_traces) == 0:
-        print(f"No data found for {evt}")
-        print()
-        continue
+    isn_traces = read(nfile).merge()
 
     #######################################################################################################################
     # RUN AUTOPICKER
@@ -795,7 +990,7 @@ for i in range(len(etab)):
         # autopicker command
         cmd = f"scautopick --ep --config-db {wdir}/config_autop.xml --inventory-db {wdir}/inventory_autop.xml" \
               f" --playback -I file://{wdir}/{idat}/{evt}.mseed > {wdir}/{idat}/{oxml}"
-        print(f" Running experiment #{exp} for {evt}")
+        print(f" Running {ext} experiment #{exp} for {evt}")
         print(' ' + cmd)
         os.system(cmd)
     # read output file
@@ -815,180 +1010,11 @@ for i in range(len(etab)):
 
     #######################################################################################################################
     # RETRIEVE HAND PICKS
-    evt_lst = isn_client.get_events(eventid=etab.EventID[i], includearrivals=True)[0]
-    n = 0
-    htab = pd.DataFrame({'net': pd.Series(dtype='string'), 'sta': pd.Series(dtype='string'), 'loc': pd.Series(dtype='string'),
-                         'chn': pd.Series(dtype='string'), 'pha': pd.Series(dtype='string'), 'pic': pd.Series(dtype='float64')})
-    for pik in evt_lst.picks:
-        if pik.phase_hint[0] == 'S':
-            continue
-        if pik.waveform_id.location_code is None:
-            htab.loc[htab.shape[0]] = [pik.waveform_id.network_code, pik.waveform_id.station_code, '',
-                                       pik.waveform_id.channel_code, pik.phase_hint, pik.time -
-                                       evt_lst.preferred_origin().time]
-        else:
-            htab.loc[htab.shape[0]] = [pik.waveform_id.network_code, pik.waveform_id.station_code,
-                                       pik.waveform_id.location_code, pik.waveform_id.channel_code,
-                                       pik.phase_hint, pik.time - evt_lst.preferred_origin().time]
-        n += 1
-    print(f" {n} hand picks")
+    htab = get_cat_picks(etab.EventID[i])
 
     #######################################################################################################################
     # DATA PRE-PROCESSING
-    # array initialisation for common arrivals (hand/auto)
-    rtab = pd.DataFrame({'net': pd.Series(dtype='string'), 'sta': pd.Series(dtype='string'), 'loc': pd.Series(dtype='string'),
-                         'chn': pd.Series(dtype='string'), 'dis': pd.Series(dtype='float64'), 'harr': pd.Series(dtype='float64'),
-                         'aarr': pd.Series(dtype='float64'), 'tarr': pd.Series(dtype='float64')})
-    # traces to delete
-    to_del = []
-    nr = 0
-    k = 0
-    while k < len(isn_traces):
-        # print(k, f"{isn_traces[k].stats.network}.{isn_traces[k].stats.station}."
-        #          f"{isn_traces[k].stats.location}.{isn_traces[k].stats.channel}")
-        # selection of best available channel
-        lst = isn_traces.select(station=isn_traces[k].stats.station)
-        ss = None
-        if len(lst) == 1:
-            ss = lst.select(station=isn_traces[k].stats.station)
-        elif len(lst) > 1:
-            # in case multiple channels available
-            pp = None
-            jp = None
-            # in case pick exists
-            if not atab[atab.sta == isn_traces[k].stats.station].empty:
-                jj = atab.index[atab.sta == isn_traces[k].stats.station].to_list()
-                if len(jj) > 1:
-                    # in case several picks exist, test each acceptable option (ranked with decreasing priority)
-                    for j in jj:
-                        if pp is None and atab.net[j] == 'IS' and atab.chn[j] == 'HHZ':
-                            pp = 1
-                            jp = j
-                        if pp is None and atab.net[j] == 'GE' and atab.chn[j] == 'HHZ':
-                            pp = 1
-                            jp = j
-                        if pp is None and atab.net[j] == 'IS' and atab.chn[j] == 'BHZ':
-                            pp = 1
-                            jp = j
-                        if pp is None and atab.net[j] == 'GE' and atab.chn[j] == 'BHZ':
-                            pp = 1
-                            jp = j
-                        if pp is None and atab.net[j] == 'IS' and atab.chn[j] == 'ENZ':
-                            pp = 1
-                            jp = j
-                        if pp is None and atab.net[j] == 'GE' and atab.chn[j] == 'ENZ':
-                            pp = 1
-                            jp = j
-            if not ss or ss is None:
-                if pp is not None:
-                    ss = lst.select(station=atab.sta[jp], network=atab.net[jp], channel=atab.chn[jp])
-                else:
-                    # if no pick, and in case several available channels, test each acceptable option (ranked with decreasing priority)
-                    s1 = lst.select(station=isn_traces[k].stats.station, network='IS', channel='HHZ')
-                    if s1:
-                        ss = s1
-                    s2 = lst.select(station=isn_traces[k].stats.station, network='GE', channel='HHZ')
-                    if not s1 and s2:
-                        ss = s2
-                    s3 = lst.select(station=isn_traces[k].stats.station, network='IS', channel='BHZ')
-                    if not s1 and not s2 and s3:
-                        ss = s3
-                    s4 = lst.select(station=isn_traces[k].stats.station, network='GE', channel='BHZ')
-                    if not s1 and not s2 and not s3 and s4:
-                        ss = s4
-                    s5 = lst.select(station=isn_traces[k].stats.station, network='IS', channel='ENZ')
-                    if not s1 and not s2 and not s3 and not s4 and s5:
-                        ss = s5
-                    s6 = lst.select(station=isn_traces[k].stats.station, network='GE', channel='ENZ')
-                    if not s1 and not s2 and not s3 and not s4 and not s5 and s6:
-                        ss = s6
-            # remove unselected channels (only getting here if >1 channels)
-            for item in lst:
-                if item != ss[0]:
-                    # isn_traces.remove(item)
-                    to_del.append(item)
-        elif len(lst) == 0:
-            # print(' Not in stream')
-            k += 1
-            continue
-        # find station in inventory
-        stn = isn_inv.select(network=isn_traces[k].stats.network, station=isn_traces[k].stats.station,
-                             channel=isn_traces[k].stats.channel, location=isn_traces[k].stats.location)
-        if len(stn) == 0:
-            # print(' Not in inventory')
-            # isn_traces.remove(isn_traces[k])
-            to_del.append(isn_traces[k])
-            k += 1
-            continue
-        elif len(stn) > 1:
-            print(f" Multiple matches in station inventory: {isn_traces[k].stats.station}")
-            exit()
-        # calculate event-station distance
-        d = gdist.distance((epar['elat'], epar['elon']), (stn[0].stations[0].channels[0].latitude, stn[0].stations[0].channels[0].longitude))
-        isn_traces[k].stats.distance = d.m
-        # compute theoretical travel times
-        x = model.get_travel_times(source_depth_in_km=epar['edep'], distance_in_degree=d.km / (2 * np.pi * rrad / 360),
-                                   phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
-        if len(x) != 0:
-            isn_traces[k].stats['theo_tt'] = x[0].time
-        else:
-            # print(' No theoretical arrival')
-            isn_traces[k].stats['theo_tt'] = np.nan
-        # selection of picks for statistics and output file
-        kh = None
-        # hand picks
-        if n > 0:
-            if not htab[(htab.sta == isn_traces[k].stats.station)].empty:
-                kh = htab.index[(htab.sta == isn_traces[k].stats.station) &
-                                (htab.net == isn_traces[k].stats.network) & (htab.chn == isn_traces[k].stats.channel)].to_list()
-                if len(kh) == 1:
-                    kh = kh[0]
-                elif len(kh) > 1:
-                    print(' Multiple results in hand picks')
-                    exit()
-                else:
-                    # print(' No result in hand picks')
-                    k += 1
-                    continue
-        ka = None
-        # automatic picks
-        if not atab.empty:
-            if not atab[(atab.sta == isn_traces[k].stats.station)].empty:
-                # indexing
-                tab = atab[(atab.sta == isn_traces[k].stats.station) &
-                           (atab.net == isn_traces[k].stats.network) & (atab.chn == isn_traces[k].stats.channel)]
-                tab = tab.assign(tdif=pd.Series([None] * len(tab), dtype='float'))
-                if tab.empty:
-                    # print(' No result in auto picks')
-                    k += 1
-                    continue
-                if len(tab) > 1:
-                    ka = None
-                    # find pick closest to theoretical arrival
-                    tab['tdif'] = [abs(xx - x[0].time) for xx in tab.pic.to_list()]
-                    for j in tab.index:
-                        if tab.pic[j] > 0 and j == tab['tdif'].idxmin():
-                            ka = j
-                            break
-                else:
-                    ka = tab.index[0]
-        # table for residuals (for statistics)
-        if kh is not None and ka is not None:
-            rtab.loc[rtab.shape[0]] = [isn_traces[k].stats.network, isn_traces[k].stats.station, isn_traces[k].stats.location,
-                                       isn_traces[k].stats.channel, isn_traces[k].stats.distance/1000.,
-                                       htab.pic[kh], atab.pic[ka], isn_traces[k].stats.theo_tt]
-            nr += 1
-        elif kh is None and ka is not None:
-            rtab.loc[rtab.shape[0]] = [isn_traces[k].stats.network, isn_traces[k].stats.station, isn_traces[k].stats.location,
-                                       isn_traces[k].stats.channel, isn_traces[k].stats.distance/1000.,
-                                       np.nan, atab.pic[ka], isn_traces[k].stats.theo_tt]
-        k += 1
-    # delete selected waveforms
-    for tr in to_del:
-        try:
-            isn_traces.remove(tr)
-        except:
-            continue
+    rtab, isn_traces = add_event_data(isn_traces, atab, htab, epar, isn_inv)
     #######################################################################################################################
     # BUILD OUTPUT FILE
     if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") == 0:
@@ -1026,7 +1052,7 @@ for i in range(len(etab)):
         tr_dist = [tr.stats.distance for tr in isn_traces]
         sorted_ind = np.argsort(tr_dist)[::-1]
         print(f" {len(isn_traces)} waveforms")
-        plot_autopick_sec(isn_traces, atab, htab, epar, fpar, sorted_ind, f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
+        plot_autopick_sec(isn_traces, atab, htab, epar, isn_inv, fpar, sorted_ind, f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
     print()
 
 ########################################################################################################################

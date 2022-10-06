@@ -401,9 +401,9 @@ def process_mseed(mseed_in, sta_inv, time_win):
     for tr in stream.select(network='IS', station='HRFI', channel='HHZ', location=''):
         stream.remove(tr)
     # remove Meiron stations with HHZ channel (not in inventory)
-    for t in stream.select(network='IS', channel='HHZ'):
-        if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
-            stream.remove(t)
+    for tr in stream.select(network='IS', channel='HHZ'):
+        if 'MMA' in tr.stats.station or 'MMB' in tr.stats.station or 'MMC' in tr.stats.station:
+            stream.remove(tr)
     # remove response from all traces
     stream.remove_response(output='VEL', inventory=sta_inv)
     # apply taper to all traces

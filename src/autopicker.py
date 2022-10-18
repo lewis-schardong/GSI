@@ -23,11 +23,13 @@ from obspy.taup import TauPyModel
 user_name = pwd.getpwuid(os.getuid())[0]
 
 
-def get_traces_deci(evt_id, ori_time, time_win):
+def get_traces_deci(evt_id, ori_time, time_win, sta_inv, filt_param):
     """
     :param evt_id: event ID
     :param ori_time: event origin time
     :param time_win: half-length of time window
+    :param sta_inv: station inventory
+    :param filt_param: dictionary containing filter parameters
     :return: full path of created .mseed file
     """
     # define file extension based on time window length
@@ -51,7 +53,47 @@ def get_traces_deci(evt_id, ori_time, time_win):
         if os.path.getsize(mseed) == 0:
             os.remove(mseed)
             mseed = ''
-    return mseed
+    # read raw miniSEED file
+    stream = read(mseed)
+    mseed_out = mseed.replace('.raw', '')
+    if path.exists(mseed_out) != 0:
+        print(f' Waveform data already processed: {mseed_out}')
+        return mseed, mseed_out
+    # remove problematic channels
+    y = stream.select(network='IS', station='KRPN')
+    for t in y:
+        stream.remove(t)
+    for t in stream.select(network='IS', station='EIL', channel='BHZ'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='GEM', channel='BHZ'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='KFSB', channel='HHZ', location='22'):
+        stream.remove(t)
+    for t in stream.select(network='IS', station='HRFI', channel='HHZ', location=''):
+        stream.remove(t)
+    # remove Meiron stations with HHZ channel (not in inventory)
+    for t in stream.select(network='IS', channel='HHZ'):
+        if 'MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station:
+            stream.remove(t)
+    # remove response from all traces
+    try:
+        stream.remove_response(output='VEL', inventory=sta_inv)
+    except:
+        for t in stream:
+            print(f'{t.stats.network}.{t.stats.station}.{t.stats.location}.{t.stats.channel}')
+            t.remove_response(output='VEL', inventory=sta_inv)
+            exit()
+    # apply taper to all traces
+    stream.taper(max_percentage=.5, type='cosine', max_length=filt_param['taper'], side='left')
+    # apply high-pass filter to all traces
+    stream.filter('highpass', freq=1./filt_param['rmhp'])
+    # remove trend from all traces
+    stream.detrend('spline', order=3, dspline=500)
+    # apply Butterworth band-pass filter to all traces
+    stream.filter('bandpass', freqmin=filt_param['bwminf'], freqmax=filt_param['bwmaxf'], corners=filt_param['bworder'])
+    # write miniSEED file
+    stream.write(mseed_out)
+    return mseed, mseed_out
 
 
 def process_mseed(mseed_in, sta_inv, filt_param):
@@ -971,8 +1013,9 @@ for i in range(len(etab)):
     #######################################################################################################################
     # RETRIEVE WAVEFORM DATA
     # retrieve raw .mseed data
-    mfile = get_traces_deci(evt, datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), twin)
+    mfile = get_traces_deci(evt, datetime.strptime(str(etab.OriginTime[i]).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), twin, isn_inv, fpar)
     print(mfile)
+    exit()
     # process raw .mseed data
     nfile = process_mseed(mfile, isn_inv, fpar)
     print(nfile)

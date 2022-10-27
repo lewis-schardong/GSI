@@ -52,11 +52,11 @@ def get_epic_events_db(source='eew-b-jer', tbeg=datetime.now() - timedelta(days=
     # variables to query
     variables = ['eventid', 'ver', 'evlat', 'evlon', 'dep', 'mag', 'time', 'nS', 'alert_time', 'Ast']
     # output event table
-    evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_ver': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+    evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_ver': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                             'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'), 'evt_nsta': pd.Series(dtype='int64'),
-                            'evt_maxmag_mag': pd.Series(dtype='float64'), 'evt_maxmag_time': pd.Series(dtype='datetime64[ns]'),
-                            'evt_alert_mag': pd.Series(dtype='float64'), 'evt_alert_time': pd.Series(dtype='datetime64[ns]'),
-                            'evt_1stver_mag': pd.Series(dtype='float64'), 'evt_1stver_time': pd.Series(dtype='datetime64[ns]')})
+                            'evt_maxmag_mag': pd.Series(dtype='float64'), 'evt_maxmag_time': pd.Series(dtype='datetime64[ms]'),
+                            'evt_alert_mag': pd.Series(dtype='float64'), 'evt_alert_time': pd.Series(dtype='datetime64[ms]'),
+                            'evt_1stver_mag': pd.Series(dtype='float64'), 'evt_1stver_time': pd.Series(dtype='datetime64[ms]')})
     # get alert list from database for month of interest
     al_list = EVENT.objects.filter(Ast=True, source__contains=source, alert_time__range=[str(UTCDateTime(tbeg)), str(UTCDateTime(tend))]) \
         .values('eventid').order_by('eventid').distinct()
@@ -100,7 +100,7 @@ def get_epic_triggers_db(source='eew-b-jer', evt_id=None, evt_ver=None):
                              'trig_sta': pd.Series(dtype='string'), 'trig_net': pd.Series(dtype='string'),
                              'trig_chn': pd.Series(dtype='string'), 'trig_loc': pd.Series(dtype='string'),
                              'trig_lat': pd.Series(dtype='float64'), 'trig_lon': pd.Series(dtype='float64'),
-                             'trig_time': pd.Series(dtype='datetime64[ns]'), 'trig_dis': pd.Series(dtype='float64'),
+                             'trig_time': pd.Series(dtype='datetime64[ms]'), 'trig_dis': pd.Series(dtype='float64'),
                              'trig_azi': pd.Series(dtype='float64')})
     # get alert list from database for month of interest
     tr_list = TRIGGER.objects.filter(source__contains=source, eventid=evt_id, ver=evt_ver).values(*variables).order_by(
@@ -116,7 +116,7 @@ def get_epic_triggers_db(source='eew-b-jer', evt_id=None, evt_ver=None):
     return trig_tab
 
 
-def get_cat_events_db(tbeg=datetime.now() - timedelta(days=7), tend=datetime.now()):
+def get_catalogue_events_db(tbeg=datetime.now() - timedelta(days=7), tend=datetime.now()):
     """
     :param tbeg: starting date/time
     :param tend: ending date/time
@@ -125,7 +125,7 @@ def get_cat_events_db(tbeg=datetime.now() - timedelta(days=7), tend=datetime.now
     # load catalogue events for period of interest
     evt_lst = Client('http://172.16.46.140:8181/').get_events(starttime=UTCDateTime(tbeg), endtime=UTCDateTime(tend), includearrivals=False)
     # output event table
-    cat_tab = pd.DataFrame({'evt_id': pd.Series(dtype='string'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+    cat_tab = pd.DataFrame({'evt_id': pd.Series(dtype='string'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                             'evt_lat': pd.Series(dtype='float64'),
                             'evt_lon': pd.Series(dtype='float64'), 'evt_dep': pd.Series(dtype='float64'),
                             'evt_mag': pd.Series(dtype='float64'), 'evt_type': pd.Series(dtype='string')})
@@ -152,7 +152,7 @@ def get_cat_events_db(tbeg=datetime.now() - timedelta(days=7), tend=datetime.now
     return cat_tab
 
 
-def get_cat_event_match(cat_tab, event_row, time_win, time_lim, loca_lim, logger_name):
+def get_catalogue_event_match(cat_tab, event_row, time_win, time_lim, loca_lim, logger_name):
     """
     :param cat_tab: DataFrame of catalogue events
     :param event_row: DataFrame row for EPIC alert to match
@@ -215,7 +215,7 @@ def get_cat_event_match(cat_tab, event_row, time_win, time_lim, loca_lim, logger
     return win_tab.evt_id[kkk]
 
 
-def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_name):
+def get_teleseism_match(client, event_row, cat_tab, time_win, time_lim, logger_name):
     """
     :param client: database client to retrieve teleseisms from
     :param event_row: DataFrame row for EPIC alert to match
@@ -257,7 +257,7 @@ def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_
                                             [True if xx < time_lim * 5.8 else False for xx in loca_dif])]
         if sum(and_test) == 1:
             jjj = and_test.index(True)
-            evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+            evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                     'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64')})
             evt_tab.loc[evt_tab.shape[0]] = [event_row.evt_id, np.datetime64(tele_tab[jjj].preferred_origin().time),
                                              tele_tab[jjj].preferred_origin().latitude,
@@ -266,7 +266,7 @@ def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_
                              f" {datetime.utcfromtimestamp(tele_tab[jjj].preferred_origin().time.timestamp).strftime('%d/%m/%Y %H:%M:%S')}: "
                              f"[{tele_tab[jjj].preferred_origin().latitude}, {tele_tab[jjj].preferred_origin().longitude}] "
                              f"M{tele_tab[jjj].preferred_magnitude().mag:4.2f}")
-            gsi_id = get_cat_event_match(cat_tab, evt_tab.loc[0], time_win, time_lim, 100., logger)
+            gsi_id = get_catalogue_event_match(cat_tab, evt_tab.loc[0], time_win, time_lim, 100., logger)
             if gsi_id and gsi_id != '':
                 dist = gdist.distance((cat_tab[cat_tab.evt_id == gsi_id].evt_lat.to_list()[0],
                                        cat_tab[cat_tab.evt_id == gsi_id].evt_lon.to_list()[0]),
@@ -282,7 +282,7 @@ def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_
             ind = [ii for ii, t in enumerate(and_test) if t is True]
             # index of event with minimum OT error
             jjj = time_dif.index(min([time_dif[ii] for ii in ind]))
-            evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+            evt_tab = pd.DataFrame({'evt_id': pd.Series(dtype='int64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                     'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64')})
             evt_tab.loc[evt_tab.shape[0]] = [event_row.evt_id, np.datetime64(tele_tab[jjj].preferred_origin().time),
                                              tele_tab[jjj].preferred_origin().latitude,
@@ -291,7 +291,7 @@ def get_tele_event_match(client, event_row, cat_tab, time_win, time_lim, logger_
                              f" {datetime.utcfromtimestamp(tele_tab[jjj].preferred_origin().time.timestamp).strftime('%d/%m/%Y %H:%M:%S')}: "
                              f"[{tele_tab[jjj].preferred_origin().latitude}, {tele_tab[jjj].preferred_origin().longitude}] "
                              f"M{tele_tab[jjj].preferred_magnitude().mag:4.2f}")
-            gsi_id = get_cat_event_match(cat_tab, evt_tab.loc[0], time_win, time_lim, 100., logger)
+            gsi_id = get_catalogue_event_match(cat_tab, evt_tab.loc[0], time_win, time_lim, 100., logger)
             if gsi_id and gsi_id != '':
                 dist = gdist.distance((cat_tab[cat_tab.evt_id == gsi_id].evt_lat.to_list()[0],
                                        cat_tab[cat_tab.evt_id == gsi_id].evt_lon.to_list()[0]),
@@ -438,7 +438,6 @@ def add_event_data(stream, event_row, sta_inv):
     # calculate distances and theoretical arrival times
     for tr in stream:
         # find station of interest
-        # sta = station_tab[station_tab.sta == tr.stats.station]
         sta = sta_inv.select(station=tr.stats.station)
         # compute distance from EMSC event
         dist = gdist.distance((event_row.evt_lat.to_list()[0], event_row.evt_lon.to_list()[0]),
@@ -524,8 +523,7 @@ def plot_event_rec_sec(stream, index=None, event_row=None, match_row=None, trig_
     axis.set_xlabel('Time [s]', fontweight='bold')
     # axes
     axis.grid(which='both', axis='both')
-    date_form = DateFormatter('%d/%m/%Y %H:%M:%S')
-    axis.xaxis.set_major_formatter(date_form)
+    axis.xaxis.set_major_formatter(DateFormatter('%d/%m/%Y %H:%M:%S'))
     # legend
     if not h2 and not h5:
         axis.legend(handles=[h4, h1], loc='lower left', fontsize=8)
@@ -628,8 +626,7 @@ def plot_epic_check_summary(evt_tab, cat_tab, source, fig_name=None):
     if not fig_name:
         plt.show(block=False)
     # AXIS 1: SUMMARY MAP
-    bmap = Basemap(projection='cyl', llcrnrlon=ngrd[2], llcrnrlat=ngrd[0], urcrnrlon=ngrd[3] + .5, urcrnrlat=ngrd[1],
-                   ax=ax1, resolution='i')
+    bmap = Basemap(projection='cyl', llcrnrlon=ngrd[2], llcrnrlat=ngrd[0], urcrnrlon=ngrd[3] + .5, urcrnrlat=ngrd[1], ax=ax1, resolution='i')
     # draw map
     bmap.drawmapboundary(fill_color='none')
     bmap.fillcontinents(color='0.8', lake_color='white')
@@ -764,7 +761,7 @@ for m in range(dm):
 
     ############################
     # LOADING CATALOGUE EVENTS #
-    ctab = get_cat_events_db(tper, tper + relativedelta(months=+1))
+    ctab = get_catalogue_events_db(tper, tper + relativedelta(months=+1))
     logger.info(f"Loaded {len(ctab)} catalogue events")
     logger.info('-----------------------------------------------------------------------------------------------------')
 
@@ -777,7 +774,7 @@ for m in range(dm):
     for i, evt in etab.iterrows():
         # if evt.evt_id != '1008':
         #     continue
-        gsid = get_cat_event_match(ctab, evt, twin, tlim, rlim, logger)
+        gsid = get_catalogue_event_match(ctab, evt, twin, tlim, rlim, logger)
         etab.loc[i, 'gsi_id'] = (gsid or '')
         if gsid:
             etab.loc[i, 'evt_type'] = ctab[ctab.evt_id == gsid].evt_type.to_list()[0]
@@ -796,9 +793,9 @@ for m in range(dm):
         # check false alerts with EMSC database
         if not gsid:
             if evt.evt_id == '930':
-                gsid, desc = get_tele_event_match(tele_client, evt, ctab, twin * 2., tlim * 30. * 2., logger)
+                gsid, desc = get_teleseism_match(tele_client, evt, ctab, twin * 2., tlim * 30. * 2., logger)
             else:
-                gsid, desc = get_tele_event_match(tele_client, evt, ctab, twin * 2., tlim * 30., logger)
+                gsid, desc = get_teleseism_match(tele_client, evt, ctab, twin * 2., tlim * 30., logger)
             etab.loc[i, 'gsi_id'] = (gsid or '')
             # event description for record section plot
             evt_lbl = desc
@@ -826,7 +823,7 @@ for m in range(dm):
                 if gsid:
                     if evt.evt_id == '829':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
-                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [-6.78, 105.36, 40., np.datetime64('2022-01-14 09:05:43.5'), 'TELESEISM']
                         isn_traces = add_event_data(isn_traces, xevt, isn_inv)
@@ -836,7 +833,7 @@ for m in range(dm):
                 else:
                     if evt.evt_id == '435':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
-                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [-20.12, -177.7, 494., np.datetime64('2021-03-10 20:12:38.5'), 'TELESEISM']
                         evt_lbl = 'FIJI M5.9'
@@ -847,21 +844,21 @@ for m in range(dm):
                         isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                     elif evt.evt_id == '523':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
-                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [37.73, 141.75, 41., np.datetime64('2021-05-13 23:58:14.8'), 'TELESEISM']
                         isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'JAPAN M6.0'
                     elif evt.evt_id == '930':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
-                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [-20.38, -178.36, 566., np.datetime64('2022-03-07 05:34:17.1'), 'TELESEISM']
                         isn_traces = add_event_data(isn_traces, xevt, isn_inv)
                         evt_lbl = 'FIJI M6.1'
                     elif evt.evt_id == '949':
                         xevt = pd.DataFrame({'evt_lat': pd.Series(dtype='float64'), 'evt_lon': pd.Series(dtype='float64'),
-                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ns]'),
+                                             'evt_dep': pd.Series(dtype='float64'), 'evt_time': pd.Series(dtype='datetime64[ms]'),
                                              'evt_type': pd.Series(dtype='string')})
                         xevt.loc[xevt.shape[0]] = [37.73, 141.62, 49., np.datetime64('2022-03-16 14:36:32.4'), 'TELESEISM']
                         isn_traces = add_event_data(isn_traces, xevt, isn_inv)
@@ -1057,7 +1054,7 @@ exit()
 #                 print('   No M>4 teleseisms')
 #                 cat = []
 #         # initialise EMSC events table
-#         xtab = pd.DataFrame({'OriginTime': pd.Series(dtype='datetime64[ns]'), 'Latitude': pd.Series(dtype='float64'),
+#         xtab = pd.DataFrame({'OriginTime': pd.Series(dtype='datetime64[ms]'), 'Latitude': pd.Series(dtype='float64'),
 #                              'Longitude': pd.Series(dtype='float64'), 'Depth': pd.Series(dtype='float64'),
 #                              'Magnitude': pd.Series(dtype='float64'), 'RegionName': pd.Series(dtype='string')})
 #         ################################################################################################################
@@ -1068,7 +1065,7 @@ exit()
 #         #            (xtab.OriginTime < row.evt_ot + timedelta(minutes=twin * 2.))].reset_index(drop=True)
 #         ################################################################################################################
 #         # initialise event array
-#         otab = pd.DataFrame({'evt_ot': pd.Series(dtype='datetime64[ns]'), 'evt_lat': pd.Series(dtype='float64'),
+#         otab = pd.DataFrame({'evt_ot': pd.Series(dtype='datetime64[ms]'), 'evt_lat': pd.Series(dtype='float64'),
 #                              'evt_lon': pd.Series(dtype='float64'), 'evt_dep': pd.Series(dtype='float64'), 'label': pd.Series(dtype='string')})
 #         if cat:  # and not cat.empty:
 #             ################################################################################################################

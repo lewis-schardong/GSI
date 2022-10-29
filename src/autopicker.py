@@ -346,6 +346,8 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
     # loop over stream channels
     stn_lbl = []
     for t in stream:
+        if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2:
+            continue
         stn_lbl.append(f"{t.stats.network}.{t.stats.station}.{t.stats.location}.{t.stats.channel}")
         n_trace += 1
         # plot waveforms
@@ -357,7 +359,7 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
             if hasattr(t.stats, 'cata_tt'):
                 # show catalogue picks
                 h3, = axis1.plot([t.stats.cata_tt, t.stats.cata_tt], [n_trace - 1, n_trace + 1], color='orange', label='Handpick')
-                axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/25., n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
+                axis1.plot(xlim1[1]+(xlim1[1]-xlim1[0])/25., n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
                 # station name (MAP)
                 for station in sta_inv.networks[0]:
                     if t.stats.station == station.code:
@@ -377,7 +379,7 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
             h4, = axis1.plot([t.stats.auto_tt[kk], t.stats.auto_tt[kk]], [n_trace - 1, n_trace + 1], color='purple', label='Autopick')
             if if_evt:
                 # marker to incidate presence of automatic pick
-                axis1.plot(xlim1[1]+(xlim1[1]-xlim1[0]).total_seconds()/40., n_trace, 'o', markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
+                axis1.plot(xlim1[1]+timedelta(seconds=(xlim1[1]-xlim1[0]).total_seconds()/40.), n_trace, 'o', markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
             if if_evt:
                 # station name (MAP)
                 for station in sta_inv.networks[0]:
@@ -421,7 +423,7 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
         else:
             axis1.legend(handles=[h1, h2, h3, h4], loc='lower left', fontsize=8)
     # display number of stations
-    axis1.text(xlim1[0] - .025 * xlim1[1], 1.01 * axis1.get_ylim()[1], f"N={n_trace}", ha='right', va='center')
+    axis1.text(xlim1[0] - timedelta(seconds=(xlim1[1]-xlim1[0]).total_seconds()/40.), 1.01 * axis1.get_ylim()[1], f"N={n_trace}", ha='right', va='center')
     # replace numerical tick labels with station names
     axis1.set_yticks(np.arange(1, n_trace+1, 1))
     axis1.set_yticklabels(stn_lbl, fontsize=5)
@@ -527,8 +529,8 @@ vel_mod = 'gitt05'
 # user_name = pwd.getpwuid(os.getuid())[0]
 # working directory
 # wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
-# wdir = f'/home/lewis/Documents/Research/Autopicker'
-wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker'
+wdir = f'/home/lewis/Documents/Research/Autopicker'
+# wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker'
 print(f'Working directory: {wdir}\n')
 mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
@@ -991,7 +993,7 @@ for _, erow in etab.iterrows():
     # BUILD OUTPUT FIGURE
     # only if figure does not already exist
     if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") == 0:
-        plot_autopick_evt_sec(isn_traces, fpar, epar, isn_inv)  # , f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
+        plot_autopick_evt_sec(isn_traces, fpar, epar, isn_inv, f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
     print()
 
 ########################################################################################################################

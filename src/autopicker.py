@@ -2,8 +2,10 @@
 import os
 from os import path
 import re
+import filecmp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+import mpld3
 import geopy.distance as gdist
 from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -12,7 +14,6 @@ import numpy as np
 import statistics
 from scipy import signal
 from datetime import datetime, timedelta
-from matplotlib.dates import DateFormatter
 import xml.etree.ElementTree as ETree
 from obspy import read, read_inventory
 from obspy.core import UTCDateTime
@@ -39,7 +40,7 @@ def get_traces_deci(evt_id, ori_time, time_win):
         # import miniSEED file
         tbeg = str(datetime.strftime(ori_time - time_win, '%Y-%m-%d %H:%M:%S'))
         tend = str(datetime.strftime(ori_time + time_win, '%Y-%m-%d %H:%M:%S'))
-        os.system(f'scart -dsE -n "IS" -c "(B|H|E)(H|N)Z" -t "{tbeg}~{tend}" {adir} > {mseed}')
+        os.system(f'scart -dsE -n "{ntw}" -c "{chn}" -t "{tbeg}~{tend}" {adir} > {mseed}')
         if os.path.getsize(mseed) == 0:
             os.remove(mseed)
             mseed = ''
@@ -50,11 +51,12 @@ def get_traces_deci(evt_id, ori_time, time_win):
         # merging all traces (e.g. if time window crosses midnight, data from both dates need to be merged)
         stream.merge(fill_value='interpolate')
         # remove problematic channels
-        for t in stream:
-            if t.stats.station == 'KRPN' or (t.stats.station == 'EIL' and t.stats.channel == 'BHZ') or (t.stats.station == 'GEM' and t.stats.channel == 'BHZ') \
-                    or (t.stats.station == 'KFSB' and t.stats.channel == 'HHZ' and t.stats.location == '22') or (t.stats.station == 'HRFI' and t.stats.channel == 'HHZ' and t.stats.location == '') \
-                    or (t.stats.channel == 'HHZ' and ('MMA' in t.stats.station or 'MMB' in t.stats.station or 'MMC' in t.stats.station)):
-                stream.remove(t)
+        for trace in stream:
+            if trace.stats.station == 'KRPN' or (trace.stats.station == 'EIL' and trace.stats.channel == 'BHZ') or (trace.stats.station == 'GEM' and trace.stats.channel == 'BHZ') \
+                    or (trace.stats.station == 'KFSB' and trace.stats.channel == 'HHZ' and trace.stats.location == '22')\
+                    or (trace.stats.station == 'HRFI' and trace.stats.channel == 'HHZ' and trace.stats.location == '')\
+                    or (trace.stats.channel == 'HHZ' and ('MMA' in trace.stats.station or 'MMB' in trace.stats.station or 'MMC' in trace.stats.station)):
+                stream.remove(trace)
         # write miniSEED file
         stream.write(mseed)
     else:
@@ -104,7 +106,7 @@ def read_autopick_xml(xml_path, stream, phase='P', picker=''):
     :param stream: data streamer of waveforms to process
     :param phase: seismic phase of interest
     :param picker: picker used
-    :return: Dataframe containing automatic picks for a given event and number of picks
+    :return: data streamer containing automatic picks in trace headers and total number of picks found
     """
     npic = 0
     # read resulting xml file
@@ -129,15 +131,15 @@ def read_autopick_xml(xml_path, stream, phase='P', picker=''):
                 pik_loc = ''
             else:
                 pik_loc = str2[4]
-            t = stream.select(network=pik_net, station=str2[3], location=pik_loc, channel=str2[5])
-            if not t:
+            trace = stream.select(network=pik_net, station=str2[3], location=pik_loc, channel=str2[5])
+            if not trace:
                 continue
             else:
-                t = t[0]
+                trace = trace[0]
             # initialise pick table if needed
-            if not hasattr(t.stats, 'auto_tt'):
-                t.stats['auto_tt'] = []
-            t.stats.auto_tt.append(datetime.strptime(line_xml[0][0].text, '%Y-%m-%dT%H:%M:%S.%fZ'))
+            if not hasattr(trace.stats, 'auto_tt'):
+                trace.stats['auto_tt'] = []
+            trace.stats.auto_tt.append(datetime.strptime(line_xml[0][0].text, '%Y-%m-%dT%H:%M:%S.%fZ'))
             npic += 1
     return stream, npic
 
@@ -147,7 +149,7 @@ def get_catalogue_picks(client, evt_id, stream):
     :param client: Obspy FDSN client to retrieve data from
     :param evt_id: event ID according to the GSI's FDSN database
     :param stream: data streamer of waveforms to process
-    :return: Dataframe containing catalogue picks for a given event and number of picks
+    :return: data streamer containing catalogue picks in trace headers and total number of picks found
     """
     npic = 0
     # retrieve event data
@@ -158,16 +160,16 @@ def get_catalogue_picks(client, evt_id, stream):
                 pik_loc = ''
             else:
                 pik_loc = pik.waveform_id.location_code
-            t = stream.select(network=pik.waveform_id.network_code, station=pik.waveform_id.station_code,
-                              location=pik_loc, channel=pik.waveform_id.channel_code)
-            if not t:
+            trace = stream.select(network=pik.waveform_id.network_code, station=pik.waveform_id.station_code,
+                                  location=pik_loc, channel=pik.waveform_id.channel_code)
+            if not trace:
                 continue
             else:
-                t = t[0]
+                trace = trace[0]
             # initialise pick table if needed
-            if not hasattr(t.stats, 'cata_tt'):
-                t.stats['cata_tt'] = []
-            t.stats.cata_tt.append(datetime.strptime(str(pik.time), '%Y-%m-%dT%H:%M:%S.%fZ'))
+            if not hasattr(trace.stats, 'cata_tt'):
+                trace.stats['cata_tt'] = []
+            trace.stats.cata_tt.append(datetime.strptime(str(pik.time), '%Y-%m-%dT%H:%M:%S.%fZ'))
             npic += 1
     return stream, npic
 
@@ -203,22 +205,23 @@ def add_event_data(stream, evt_dict, ref_mod, sta_inv):
         ss = None
         # in case multiple channels available
         if len(lst) > 1:
-            for t in lst:
+            for trace in lst:
                 ss = None
                 # in case several picks exist, test each acceptable option (ranked with decreasing priority)
-                if ss is None and t.stats.channel == 'HHZ':
-                    ss = lst.select(station=t.stats.station, channel='HHZ')
-                if ss is None and t.stats.channel == 'BHZ':
-                    ss = lst.select(station=t.stats.station, channel='BHZ')
-                if ss is None and t.stats.channel == 'ENZ':
-                    ss = lst.select(station=t.stats.station, channel='ENZ')
-            # remove unselected channels (only getting here if >1 channels)
+                if ss is None and trace.stats.channel == 'HHZ':
+                    ss = lst.select(station=trace.stats.station, channel='HHZ')
+                if ss is None and trace.stats.channel == 'BHZ':
+                    ss = lst.select(station=trace.stats.station, channel='BHZ')
+                if ss is None and trace.stats.channel == 'ENZ':
+                    ss = lst.select(station=trace.stats.station, channel='ENZ')
+            # remove traces for unselected channels (only getting here if >1 channels)
             for item in lst:
                 if (ss and ss is not None) and item != ss[0]:
                     to_del.append(item)
         # find station in inventory
         station = sta_inv.select(network=stream[k].stats.network, station=stream[k].stats.station,
                                  channel=stream[k].stats.channel, location=stream[k].stats.location)
+        # remove traces if station/channel not in inventory
         if not station:
             to_del.append(stream[k])
             k += 1
@@ -229,40 +232,41 @@ def add_event_data(stream, evt_dict, ref_mod, sta_inv):
         # calculate event-station distance
         dis = gdist.distance((evt_dict['elat'], evt_dict['elon']), (station[0].stations[0].channels[0].latitude, station[0].stations[0].channels[0].longitude))
         stream[k].stats.distance = dis.m
-        # compute theoretical travel times
+        # compute theoretical travel time
         theo_tt = theory.get_travel_times(source_depth_in_km=evt_dict['edep'], distance_in_degree=dis.km / (2 * np.pi * rrad / 360), phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
+        # add theoretical travel time to streamer header
         if len(theo_tt) != 0:
             stream[k].stats['theo_tt'] = evt_dict['eori'] + timedelta(seconds=theo_tt[0].time)
         else:
             stream[k].stats['theo_tt'] = np.nan
-        # selection of picks for statistics and output file
-        kh = None
-        # catalogue picks
-        if hasattr(stream[k].stats, 'cata_tt') and len(stream[k].stats.cata_tt) > 0:
-            if len(stream[k].stats.cata_tt) == 1:
-                kh = 0
-            elif len(stream[k].stats.cata_tt) > 1:
-                print(' Multiple results in catalogue picks')
-                return None, None
-            else:
-                # print(' No result in catalogue picks')
-                k += 1
-                continue
-        ka = None
-        # automatic picks
-        if hasattr(stream[k].stats, 'auto_tt') and len(stream[k].stats.auto_tt) > 0:
-            stream[k].stats['tdiff'] = []
-            if len(stream[k].stats.auto_tt) > 1:
-                ka = None
-                # find pick closest to theoretical arrival
-                stream[k].stats.tdiff = [abs(xx - (evt_dict['eori'] + timedelta(seconds=theo_tt[0].time))).total_seconds() for xx in stream[k].stats.auto_tt]
-                for jj in range(len(stream[k].stats.auto_tt)):
-                    if stream[k].stats.auto_tt[jj] > evt_dict['eori'] and jj == stream[k].stats.tdiff.index(min(stream[k].stats.tdiff)):
-                        ka = jj
-                        break
-            else:
-                ka = 0
         if if_evt:
+            # selection of picks for statistics and output file
+            kh = None
+            # catalogue picks
+            if hasattr(stream[k].stats, 'cata_tt') and len(stream[k].stats.cata_tt) > 0:
+                if len(stream[k].stats.cata_tt) == 1:
+                    kh = 0
+                elif len(stream[k].stats.cata_tt) > 1:
+                    print(' Multiple results in catalogue picks')
+                    return None, None
+                else:
+                    # print(' No result in catalogue picks')
+                    k += 1
+                    continue
+            ka = None
+            # automatic picks
+            if hasattr(stream[k].stats, 'auto_tt') and len(stream[k].stats.auto_tt) > 0:
+                stream[k].stats['tdiff'] = []
+                if len(stream[k].stats.auto_tt) > 1:
+                    ka = None
+                    # find pick closest to theoretical arrival
+                    stream[k].stats.tdiff = [abs(xx - (evt_dict['eori'] + timedelta(seconds=theo_tt[0].time))).total_seconds() for xx in stream[k].stats.auto_tt]
+                    for jj in range(len(stream[k].stats.auto_tt)):
+                        if stream[k].stats.auto_tt[jj] > evt_dict['eori'] and jj == stream[k].stats.tdiff.index(min(stream[k].stats.tdiff)):
+                            ka = jj
+                            break
+                else:
+                    ka = 0
             # table for residuals (for statistics)
             if kh is not None and ka is not None:
                 res_tab.loc[res_tab.shape[0]] = [stream[k].stats.network, stream[k].stats.station, stream[k].stats.location,
@@ -274,67 +278,59 @@ def add_event_data(stream, evt_dict, ref_mod, sta_inv):
                                                  np.datetime64('NaT'), stream[k].stats.auto_tt[ka], stream[k].stats.theo_tt]
         k += 1
     # delete selected waveforms
-    for t in to_del:
+    for trace in to_del:
         try:
-            stream.remove(t)
+            stream.remove(trace)
         except:
             continue
     return stream, res_tab
 
 
-def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
+def plot_autopick_evt_sec(stream, auto_tab, hand_tab, evt_param, filt_param, index=None, fig_name=None):
     """
     :param stream: data streamer of waveforms to process
-    :param filt_dict: Dictionary containing filter parameters used
-    :param evt_dict: dictionary containing event parameters
-    :param sta_inv: .xml inventory containing all station info.
-    :param fig_name: file name & path of the output figure (figure is displayed if none is provided)
-    :return: nothing
+    :param auto_tab: DataFrame containing automatic picks
+    :param hand_tab: DataFrame containing catalogue picks
+    :param evt_param: dictionary containing event parameters
+    :param filt_param: dictionary containing filter parameters
+    :param index: indexes to sort waveforms
+    :param fig_name: figure file name (figure is shown if None)
+    :return: data streamer with event info.
     """
-    # test whether event or continuous plot is required
-    if_evt = False
-    if stream[0].stats.endtime-stream[0].stats.starttime <= 600.:
-        if_evt = True
     # plotting mode
     if fig_name:
         mpl.use('Agg')
     # define axis limits
-    if if_evt:
-        theo_tab = [t.stats.theo_tt for t in stream]
-        if min(theo_tab)-timedelta(seconds=10.) >= evt_dict['eori']:
-            tmin = min(theo_tab) - timedelta(seconds=10.)
-        else:
-            tmin = evt_dict['eori']
-        tmax = max(theo_tab) + timedelta(seconds=50.)
+    theo_tab = [s_tr.stats.theo_tt for s_tr in stream]
+    if min(theo_tab)-10 >= 0.:
+        tmin = min(theo_tab) - 10.
     else:
-        tmin = datetime.strptime(str(min([t.stats.starttime for t in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
-        tmax = datetime.strptime(str(max([t.stats.endtime for t in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
-    xlim1 = [tmin, tmax]
+        tmin = 0.
+    xlim1 = [tmin, max(theo_tab)+50.]
     xlim2 = [-5., 5.]
     # create figure & axis
-    axis3 = []
-    axis2 = []
-    if if_evt:
-        fig, (axis1, axis2, axis3) = plt.subplots(nrows=1, ncols=3, squeeze=True, figsize=(18, 9), dpi=200, gridspec_kw={'width_ratios': [2, 1, 1]})
-    else:
-        fig, axis1 = plt.subplots(nrows=1, ncols=1, squeeze=True, figsize=(18, 9), dpi=200)
+    fig, (axis1, axis2, axis3) = plt.subplots(nrows=1, ncols=3, squeeze=True, figsize=(18, 9), dpi=200,
+                                              gridspec_kw={'width_ratios': [2, 1, 1]})
     if not fig_name:
         plt.show(block=False)
     # AXIS 1: VELOCITY WAVEFORMS
+    axis1.grid(which='both', axis='both')
     axis1.set_xlim(xlim1)
-    if if_evt:
-        axis1.grid(which='both', axis='both')
-        # AXIS 2: RESIDUAL OVER DISTANCE PLOT
-        axis2.grid(which='both', axis='both')
-        axis2.set_xlim(xlim2)
-        # AXIS 3: LOCAL STATIONS & EVENT MAP
-        m = Basemap(projection='cyl', llcrnrlon=mgrd[2]+.5, llcrnrlat=mgrd[0], urcrnrlon=mgrd[3]-.5, urcrnrlat=mgrd[1], resolution='l', ax=axis3)
-        # draw map
-        m.drawmapboundary(fill_color='none')
-        m.fillcontinents(color='0.8', lake_color='white')
-        # show parallels and meridians (labels = [left,right,top,bottom])
-        m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
-        m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
+    # AXIS 2: RESIDUAL OVER DISTANCE PLOT
+    axis2.grid(which='both', axis='both')
+    axis2.set_xlim(xlim2)
+    # AXIS 3: LOCAL STATIONS & EVENT MAP
+    m = Basemap(projection='cyl', llcrnrlon=mgrd[2]+.5, llcrnrlat=mgrd[0], urcrnrlon=mgrd[3]-.5, urcrnrlat=mgrd[1], resolution='l', ax=axis3)
+    # draw map
+    m.drawmapboundary(fill_color='none')
+    m.fillcontinents(color='0.8', lake_color='white')
+    # show parallels and meridians (labels = [left,right,top,bottom])
+    m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
+    m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
+    n_hpic = 0
+    n_apic = 0
+    n_tres = 0
+    n_theo = 0
     tres_tab = []
     theo_tab = []
     h1 = []
@@ -345,69 +341,100 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
     n_trace = 0
     # loop over stream channels
     stn_lbl = []
-    for t in stream:
-        if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2:
-            continue
-        stn_lbl.append(f"{t.stats.network}.{t.stats.station}.{t.stats.location}.{t.stats.channel}")
+    # sorting index (if any)
+    if index is not None:
+        ind = index
+    else:
+        ind = range(len(stream))
+    for jjj in ind:
+        stn_lbl.append(f"{stream[jjj].stats.network}.{stream[jjj].stats.station}."
+                       f"{stream[jjj].stats.location}.{stream[jjj].stats.channel}")
         n_trace += 1
+        # time vector
+        t_vec = stream[jjj].times('relative', reftime=UTCDateTime(evt_param['eori']))
         # plot waveforms
-        h1, = axis1.plot([datetime.fromtimestamp(at) for at in t.times(type='timestamp')], t.data / t.max() + n_trace, color='grey', alpha=.7, label='Velocity')
-        if if_evt:
-            # theoretical travel time
-            if not np.isnan(t.stats.theo_tt):
-                h2, = axis1.plot([t.stats.theo_tt, t.stats.theo_tt], [n_trace - 1, n_trace + 1], color='blue', linestyle='dotted', label=vel_mod)
-            if hasattr(t.stats, 'cata_tt'):
-                # show catalogue picks
-                h3, = axis1.plot([t.stats.cata_tt, t.stats.cata_tt], [n_trace - 1, n_trace + 1], color='orange', label='Handpick')
-                axis1.plot(xlim1[1]+(xlim1[1]-xlim1[0])/25., n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
-                # station name (MAP)
-                for station in sta_inv.networks[0]:
-                    if t.stats.station == station.code:
-                        axis3.plot(station.longitude, station.latitude, 's', markersize=7, color='orange', mfc='none', alpha=.7, label='Autopick')
+        h1, = axis1.plot(t_vec, stream[jjj].data / stream[jjj].max() + n_trace, color='grey', alpha=.7, label='Velocity')
+        # theoretical travel time
+        if not np.isnan(stream[jjj].stats.theo_tt):
+            h2, = axis1.plot([stream[jjj].stats.theo_tt, stream[jjj].stats.theo_tt], [n_trace - 1, n_trace + 1],
+                             color='blue', linestyle='dotted', label=vel_mod)
+        # show hand picks
+        k_hpic = None
+        if not hand_tab.empty:
+            if not hand_tab[(hand_tab.sta == stream[jjj].stats.station)].empty:
+                k_hpic = hand_tab.index[(hand_tab.sta == stream[jjj].stats.station)
+                                        & (hand_tab.net == stream[jjj].stats.network) & (hand_tab.chn == stream[jjj].stats.channel)].to_list()
+                if len(k_hpic) == 1:
+                    k_hpic = k_hpic[0]
+                else:
+                    continue
+                if k_hpic is not None:
+                    n_hpic += 1
+                    # show on both axes
+                    h3, = axis1.plot([hand_tab.pic[k_hpic], hand_tab.pic[k_hpic]], [n_trace - 1, n_trace + 1], color='orange', label='Handpick')
+                    axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/25., n_trace, 'o',
+                               markersize=5, mfc='orange', mec='none', alpha=.7, clip_on=False)
+                    # station name (MAP)
+                    for station in isn_inv.networks[0]:
+                        if stream[jjj].stats.station == station.code:
+                            axis3.plot(station.longitude, station.latitude, 's', markersize=7, color='orange', mfc='none', alpha=.7, label='Autopick')
         # show automatic picks
-        if hasattr(t.stats, 'auto_tt'):
-            if not if_evt:
-                # number of picks per station
-                axis1.text(xlim1[1] + timedelta(seconds=(xlim1[1]-xlim1[0]).total_seconds()/100.),
-                           n_trace, f"N={len(t.stats.auto_tt)}", color='purple', fontsize=5, clip_on=False, ha='left', va='center')
-            # find pick closest to theoretical arrival
-            if len(t.stats.tdiff) > 1:
-                kk = t.stats.tdiff.index(min(t.stats.tdiff))
-            else:
-                kk = 0
-            # show pick
-            h4, = axis1.plot([t.stats.auto_tt[kk], t.stats.auto_tt[kk]], [n_trace - 1, n_trace + 1], color='purple', label='Autopick')
-            if if_evt:
-                # marker to incidate presence of automatic pick
-                axis1.plot(xlim1[1]+timedelta(seconds=(xlim1[1]-xlim1[0]).total_seconds()/40.), n_trace, 'o', markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
-            if if_evt:
-                # station name (MAP)
-                for station in sta_inv.networks[0]:
-                    if t.stats.station == station.code:
-                        axis3.plot(station.longitude, station.latitude, 'o', markersize=7, color='purple', mfc='none', alpha=.7)
-        if if_evt:
-            # residual w.r.t. hand pick (if both exist)
-            if hasattr(t.stats, 'cata_tt') and hasattr(t.stats, 'auto_tt'):
-                # table for residuals (for statistics)
-                tres_tab.append(t.stats.theo_tt.index(min(t.stats.tdiff)) - t.stats.cata_tt)
-                # residual plot
-                axis2.plot(t.stats.theo_tt.index(min(t.stats.tdiff)) - t.stats.cata_tt, n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7)
-            # residual w.r.t. theoretical pick (if automatic pick exists)
-            if hasattr(t.stats, 'auto_tt'):
-                # table for residuals (for statistics)
-                theo_tab.append(t.stats.theo_tt.index(min(t.stats.tdiff)))
-                # residual plot
-                axis2.plot(t.stats.theo_tt.index(min(t.stats.tdiff)), n_trace, 'o', markersize=5, mfc='blue', mec='none', alpha=.7)
-    if if_evt:
-        # display statistics on residuals
-        if len(tres_tab) > 1:
-            axis2.text(.95 * xlim2[0], 4, f"N={len(tres_tab)}: {statistics.mean(tres_tab):.2f} \u00B1 {statistics.stdev(tres_tab):.2f} [s]", fontweight='bold', fontsize=8, color='orange')
-        if len(theo_tab) > 1:
-            axis2.text(.95 * xlim2[0], 1, f"N={len(theo_tab)}: {statistics.mean(theo_tab):.2f} \u00B1 {statistics.stdev(theo_tab):.2f} [s]", fontweight='bold', fontsize=8, color='blue')
+        k_apic = None
+        if not auto_tab.empty:
+            if not auto_tab[(auto_tab.sta == stream[jjj].stats.station)].empty:
+                # indexing
+                temp_tab = auto_tab[(auto_tab.sta == stream[jjj].stats.station)
+                                    & (auto_tab.net == stream[jjj].stats.network) & (auto_tab.chn == stream[jjj].stats.channel)]
+                temp_tab = temp_tab.assign(tdif=pd.Series([None] * len(temp_tab), dtype='float'))
+                if temp_tab.empty:
+                    continue
+                if len(temp_tab) > 1:
+                    k_apic = None
+                    # find pick closest to theoretical arrival
+                    temp_tab['tdif'] = [abs(xx - stream[jjj].stats.theo_tt) for xx in temp_tab.pic.to_list()]
+                    for kk in temp_tab.index:
+                        if temp_tab.pic[kk] > 0 and kk == temp_tab['tdif'].idxmin():
+                            k_apic = kk
+                            break
+                else:
+                    k_apic = temp_tab.index[0]
+                n_apic += 1
+                for kk in temp_tab.index:
+                    # show on both axes
+                    h4, = axis1.plot([temp_tab.pic[kk], temp_tab.pic[kk]], [n_trace - 1, n_trace + 1], color='purple', label='Autopick')
+                    axis1.plot(axis1.get_xlim()[1]+(axis1.get_xlim()[1]-axis1.get_xlim()[0])/40., n_trace, 'o',
+                               markersize=5, mfc='purple', mec='none', alpha=.7, clip_on=False)
+                    # station name (MAP)
+                    for station in isn_inv.networks[0]:
+                        if stream[jjj].stats.station == station.code:
+                            axis3.plot(station.longitude, station.latitude, 'o', markersize=7, color='purple', mfc='none', alpha=.7)
+        # residual w.r.t. hand pick (if both exist)
+        if k_hpic is not None and k_apic is not None:
+            # table for residuals (for statistics)
+            tres_tab.append(auto_tab.pic[k_apic] - hand_tab.pic[k_hpic])
+            # residual plot
+            axis2.plot(auto_tab.pic[k_apic] - hand_tab.pic[k_hpic], n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7)
+            # # station names
+            # axis2.text(auto_tab.pic[k_apic] - hand_tab.pic[k_hpic] - .1, n_trace, stream[jjj].stats.station,
+            #            ha='right', va='center', clip_on=True, fontsize=5)
+            n_tres += 1
+        # residual w.r.t. theoretical pick (if automatic pick exists)
+        if k_apic is not None:
+            # table for residuals (for statistics)
+            theo_tab.append(auto_tab.pic[k_apic] - stream[jjj].stats.theo_tt)
+            # residual plot
+            axis2.plot(auto_tab.pic[k_apic] - stream[jjj].stats.theo_tt, n_trace, 'o', markersize=5, mfc='blue', mec='none', alpha=.7)
+            n_theo += 1
+    # display statistics on residuals
+    if n_tres > 1:
+        axis2.text(.95 * xlim2[0], 4, f"N={n_tres}: {statistics.mean(tres_tab):.2f} \u00B1 {statistics.stdev(tres_tab):.2f} [s]",
+                   fontweight='bold', fontsize=8, color='orange')
+    if n_theo > 1:
+        axis2.text(.95 * xlim2[0], 1, f"N={n_theo}: {statistics.mean(theo_tab):.2f} \u00B1 {statistics.stdev(theo_tab):.2f} [s]",
+                   fontweight='bold', fontsize=8, color='blue')
     # axis limits
     axis1.set_ylim([0, n_trace + 1])
-    if if_evt:
-        axis2.set_ylim([0, n_trace + 1])
+    axis2.set_ylim([0, n_trace + 1])
     # legend
     if not h4:
         if not h3:
@@ -416,87 +443,79 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
             axis1.legend(handles=[h1, h2, h3], loc='lower left', fontsize=8)
     else:
         if not h3:
-            if if_evt:
-                axis1.legend(handles=[h1, h2, h4], loc='lower left', fontsize=8)
-            else:
-                axis1.legend(handles=[h1, h4], loc='lower left', fontsize=8)
+            axis1.legend(handles=[h1, h2, h4], loc='lower left', fontsize=8)
         else:
             axis1.legend(handles=[h1, h2, h3, h4], loc='lower left', fontsize=8)
-    # display number of stations
-    axis1.text(xlim1[0] - timedelta(seconds=(xlim1[1]-xlim1[0]).total_seconds()/40.), 1.01 * axis1.get_ylim()[1], f"N={n_trace}", ha='right', va='center')
+    # station and pick numbers
+    axis1.text(xlim1[0] - .025 * xlim1[1], 1.01 * axis1.get_ylim()[1], f"N={n_trace}", ha='right', va='center')
     # replace numerical tick labels with station names
     axis1.set_yticks(np.arange(1, n_trace+1, 1))
     axis1.set_yticklabels(stn_lbl, fontsize=5)
-    if if_evt:
-        axis2.set_yticklabels([])
+    axis2.set_yticklabels([])
     # axis labels
-    axis1.xaxis.set_major_formatter(DateFormatter('%d/%m/%Y %H:%M:%S'))
     axis1.set_xlabel('Time - OT [s]', fontweight='bold')
     axis1.set_ylabel('Station', fontweight='bold')
-    if if_evt:
-        axis2.set_xlabel('\u0394t [s]', fontweight='bold')
-    if if_evt:
-        # MAP
-        # fault lines
-        fid = open(f"{wdir}/../Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz", 'r')
-        flts = fid.readlines()
-        fid.close()
-        flt_x = []
-        flt_y = []
-        hf = []
-        for iii in range(len(flts)):
-            if re.search('NaN', flts[iii]):
-                flt_x = []
-                flt_y = []
-            elif iii < len(flts) - 1 and re.search('NaN', flts[iii + 1]):
-                hf, = axis3.plot(flt_x, flt_y, '.6', label='Faults')
-            else:
-                l_line = flts[iii].split()
-                flt_x.append(float(l_line[0]))
-                flt_y.append(float(l_line[1]))
-        # stations
-        hm1 = []
-        hm2 = []
-        for t in stream:
-            for station in sta_inv.networks[0]:
-                if t.stats.station == station.code:
-                    if t.stats.network == 'IS':
-                        hm1, = axis3.plot(station.longitude, station.latitude, 'b^', markersize=5, alpha=.7, mec='none', label=t.stats.network)
-                    elif t.stats.network == 'GE':
-                        hm2, = axis3.plot(station.longitude, station.latitude, 'cs', markersize=5, alpha=.7, mec='none', label=t.stats.network)
-        # event
-        he, = axis3.plot(evt_dict['elon'], evt_dict['elat'], 'r*', markersize=10, markeredgecolor='black', label='Event')
-        if evt_dict['emag']:
-            axis3.text(evt_dict['elon'] + .1, evt_dict['elat'] - .1, f"M{evt_dict['emag']:3.1f}",
-                       ha='left', va='bottom', color='red', clip_on=True, fontsize=8)
-        # legend
-        if not hm1:
-            hm = [hm2, he, hf]
-        elif not hm2:
-            hm = [hm1, he, hf]
+    axis2.set_xlabel('\u0394t [s]', fontweight='bold')
+    # MAP
+    # fault lines
+    fid = open(f"{wdir}/../Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz", 'r')
+    flts = fid.readlines()
+    fid.close()
+    flt_x = []
+    flt_y = []
+    hf = []
+    for iii in range(len(flts)):
+        if re.search('NaN', flts[iii]):
+            flt_x = []
+            flt_y = []
+        elif iii < len(flts) - 1 and re.search('NaN', flts[iii + 1]):
+            hf, = axis3.plot(flt_x, flt_y, '.6', label='Faults')
         else:
-            hm = [hm1, hm2, he, hf]
-        axis3.legend(handles=hm, loc='upper left', fontsize=8)
-        # AXIS 4: INSET MAP
-        axis4 = inset_axes(axis3, '30%', '18%', loc='lower left')
-        m = Basemap(projection='cyl', llcrnrlon=rgrd[2], llcrnrlat=rgrd[0], urcrnrlon=rgrd[3], urcrnrlat=rgrd[1], resolution='l', ax=axis4)
-        # draw map
-        m.drawmapboundary(fill_color='white')
-        m.fillcontinents(color='0.8', lake_color='white')
-        # area of interest
-        axis4.plot([mgrd[2]+.5, mgrd[2]+.5, mgrd[3]-.5, mgrd[3]-.5, mgrd[2]+.5], [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], 'r')
-        # distance from centre of local map
-        axis4.set_title(
-            f"{gdist.distance((mgrd[0]+(mgrd[1]-mgrd[0])/2., mgrd[2]+(mgrd[3]-mgrd[2])/2.), (evt_dict['elat'], evt_dict['elon'])).km:.2f} km")
-        # event
-        axis4.plot(evt_dict['elon'], evt_dict['elat'], 'r*', markersize=10, markeredgecolor='black')
+            l_line = flts[iii].split()
+            flt_x.append(float(l_line[0]))
+            flt_y.append(float(l_line[1]))
+    # stations
+    hm1 = []
+    hm2 = []
+    for jjj in ind:
+        for station in isn_inv.networks[0]:
+            if stream[jjj].stats.station == station.code:
+                if stream[jjj].stats.network == 'IS':
+                    hm1, = axis3.plot(station.longitude, station.latitude, 'b^', markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
+                elif stream[jjj].stats.network == 'GE':
+                    hm2, = axis3.plot(station.longitude, station.latitude, 'cs', markersize=5, alpha=.7, mec='none', label=stream[jjj].stats.network)
+    # event
+    he, = axis3.plot(evt_param['elon'], evt_param['elat'], 'r*', markersize=10, markeredgecolor='black', label='Event')
+    if evt_param['emag']:
+        axis3.text(evt_param['elon'] + .1, evt_param['elat'] - .1, f"M{evt_param['emag']:3.1f}",
+                   ha='left', va='bottom', color='red', clip_on=True, fontsize=8)
+    # legend
+    if not hm1:
+        hm = [hm2, he, hf]
+    elif not hm2:
+        hm = [hm1, he, hf]
+    else:
+        hm = [hm1, hm2, he, hf]
+    axis3.legend(handles=hm, loc='upper left', fontsize=8)
+    # AXIS 4: INSET MAP
+    axis4 = inset_axes(axis3, '30%', '18%', loc='lower left')
+    m = Basemap(projection='cyl', llcrnrlon=rgrd[2], llcrnrlat=rgrd[0], urcrnrlon=rgrd[3], urcrnrlat=rgrd[1], resolution='l', ax=axis4)
+    # draw map
+    m.drawmapboundary(fill_color='white')
+    m.fillcontinents(color='0.8', lake_color='white')
+    # area of interest
+    axis4.plot([mgrd[2]+.5, mgrd[2]+.5, mgrd[3]-.5, mgrd[3]-.5, mgrd[2]+.5], [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], 'r')
+    # distance from centre of local map
+    axis4.set_title(f"{gdist.distance((mgrd[0]+(mgrd[1]-mgrd[0])/2., mgrd[2]+(mgrd[3]-mgrd[2])/2.), (evt_param['elat'], evt_param['elon'])).km:.2f} km")
+    # event
+    axis4.plot(evt_param['elon'], evt_param['elat'], 'r*', markersize=10, markeredgecolor='black')
     # figure title
-    tit = f"{evt_dict['eori'].strftime('%d/%m/%Y %H:%M:%S')} \u2013 {evt_dict['edep']:.2f} km \u2013 M{evt_dict['emag']:3.1f}\n" \
-          f"HP: {filt_dict['rmhp']:.2f} [s] \u2013 Taper: {filt_dict['taper']:.2f} [s] \u2013 BP: " \
-          f"{filt_dict['bworder']} / {filt_dict['bwminf']:.2f} / {filt_dict['bwmaxf']:.2f} [Hz]\n" \
-          f"STA/LTA: {filt_dict['sta']:.2f} / {filt_dict['lta']:.2f} [s] " \
-          f"\u2013 Trigger: {filt_dict['trigon']:.2f} / {filt_dict['trigoff']:.2f}"
-    fig.suptitle(tit, fontweight='bold')
+    tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S')} \u2013 {evt_param['edep']:.2f} km \u2013 M{evt_param['emag']:3.1f}"
+    tit2 = f"HP: {filt_param['rmhp']:.2f} [s] \u2013 Taper: {filt_param['taper']:.2f} [s] \u2013 BP: " \
+           f"{filt_param['bworder']} / {filt_param['bwminf']:.2f} / {filt_param['bwmaxf']:.2f} [Hz]"
+    tit3 = f"STA/LTA: {filt_param['sta']:.2f} / {filt_param['lta']:.2f} [s] " \
+           f"\u2013 Trigger: {filt_param['trigon']:.2f} / {filt_param['trigoff']:.2f}"
+    fig.suptitle(tit1 + '\n' + tit2 + '\n' + tit3, fontweight='bold')
     # maximise figure
     plt.get_current_fig_manager().full_screen_toggle()
     # adjust plots
@@ -505,9 +524,136 @@ def plot_autopick_evt_sec(stream, filt_dict, evt_dict, sta_inv, fig_name=None):
     if fig_name:
         plt.savefig(fig_name, bbox_inches='tight', dpi='figure')
         plt.close()
-        print(f'Figure saved: {fig_name}')
     else:
         plt.show()
+    return tres_tab, n_tres, theo_tab, n_theo
+
+
+def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
+    """
+    :param stream: data streamer of waveforms to process
+    :param win_tab: list of datetimes defining the beginning of 30-s time windows containing >6 picks
+    :param fig_name: file name & path of the output figure (figure is displayed if none is provided)
+    :return: nothing
+    """
+    # define axis limits for both axes
+    tmin = datetime.strptime(str(min([trace.stats.starttime for trace in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
+    tmax = datetime.strptime(str(max([trace.stats.endtime for trace in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
+    xlim = [tmin, tmax]
+    # create figure
+    fig = plt.figure(figsize=(9, 5), dpi=200)
+    # set x-axis limits
+    plt.gca().set_xlim(xlim)
+    # show catalogue events
+    evt_lst = isn_client.get_events(starttime=xlim[0], endtime=xlim[1])
+    # explosions counter
+    n_exp = 0
+    for event in evt_lst:
+        # origin time
+        tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
+        # normalised x-axis coordinate (because of problems with datetimes and JSON)
+        xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+        if event.magnitudes:
+            # plot marker
+            plt.plot([tori, tori], [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
+            # display event type & magnitude
+            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
+                     color='red', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+        else:
+            n_exp += 1
+            # plot marker
+            plt.plot([tori, tori], [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
+            # display event type
+            plt.text(xpos, 1.01, 'EXP', color='green', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+    # show EMSC events
+    tele_client = Client('EMSC')
+    # M>5 teleseismic events catalogue
+    evt_lst1 = []
+    try:
+        evt_lst1 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=5)
+    except:
+        print(' No M>5 teleseismic events')
+    if evt_lst1:
+        for event in evt_lst1:
+            # origin time
+            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
+            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+                continue
+            # normalised x-axis coordinate (because of problems with datetimes and JSON)
+            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            # plot marker
+            plt.plot([tori, tori], [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
+            # display event type & magnitude
+            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
+                     color='purple', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+    # M>3 regional events catalogue
+    evt_lst2 = []
+    try:
+        evt_lst2 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=3, minlatitude=23, maxlatitude=43, minlongitude=20, maxlongitude=50)
+    except:
+        print('No M>3 regional events')
+    if evt_lst2:
+        for event in evt_lst2:
+            # origin time
+            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
+            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+                continue
+            # normalised x-axis coordinate (because of problems with datetimes and JSON)
+            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            # plot marker
+            plt.plot([tori, tori], [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
+            # display event type & magnitude
+            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
+                     color='orange', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+    # display total number of stations
+    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    # display total number of local events
+    plt.text(1.00, 1.01, f"Nl={len(evt_lst)-n_exp}", ha='left', va='bottom', color='red', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    # display total number of blasts
+    plt.text(1.03, 1.01, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    # display total number of regional events
+    plt.text(1.06, 1.01, f"Nr={len(evt_lst2)}", ha='left', va='bottom', color='orange', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    # display total number of teleseismic events
+    plt.text(1.09, 1.01, f"Nt={len(evt_lst1)}", ha='left', va='bottom', color='purple', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    # initialise counter
+    n_trace = 0
+    # loop over stream channels
+    for trace in stream:
+        n_trace += 1
+        # plot waveforms
+        t_vec = np.arange(0, len(trace)) * np.timedelta64(int(trace.stats.delta * 1000), '[ms]') + np.datetime64(str(trace.stats.starttime)[:-1])
+        plt.plot(t_vec, trace.data/trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
+        if hasattr(trace.stats, 'auto_tt'):
+            # number of picks per station
+            if len(trace.stats.auto_tt) > 10:
+                # show number of picks
+                plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
+                         color='red', fontsize=10, clip_on=False, ha='left', va='center', transform=plt.gca().transAxes)
+                # show station/channel name
+                plt.text(-.01, n_trace/(len(stream)+1), f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
+                         color='red', fontsize=10, clip_on=False, ha='right', va='center', transform=plt.gca().transAxes)
+            else:
+                # show number of picks
+                plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
+                         color='blue', fontsize=10, clip_on=False, ha='left', va='center', transform=plt.gca().transAxes)
+                # show station/channel name
+                plt.text(-.01, n_trace/(len(stream)+1), f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
+                         color='blue', fontsize=10, clip_on=False, ha='right', va='center', transform=plt.gca().transAxes)
+            for at in trace.stats.auto_tt:
+                plt.plot([at, at], [n_trace-.5, n_trace+.5], color='blue', label='Autopick')
+    # 30-s time windows with >6 picks
+    # plt.gca().fill_betweenx([0, n_trace+1], datetime.strptime('2021-06-15 21:00:00', '%Y-%m-%d %H:%M:%S'), datetime.strptime('2021-06-15 22:00:00', '%Y-%m-%d %H:%M:%S'), color='red', alpha=.5)
+    for win in win_tab:
+        plt.arrow(win+timedelta(seconds=15.), n_trace+1, 0., -.5, color='red')
+    # set y-axis limits
+    plt.gca().set_ylim([0, n_trace+1])
+    # remove y-axis tick labels
+    plt.gca().set_yticklabels([])
+    # set x-axis font size
+    plt.gca().tick_params(axis='x', which='major', labelsize=10)
+    # save figure
+    mpld3.save_html(fig, open(fig_name, 'w'))
+    print(f" Figure saved: {fig_name}")
     return
 
 
@@ -529,8 +675,8 @@ vel_mod = 'gitt05'
 # user_name = pwd.getpwuid(os.getuid())[0]
 # working directory
 # wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
-wdir = f'/home/lewis/Documents/Research/Autopicker'
-# wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker'
+# wdir = f'/home/lewis/Documents/Research/Autopicker'
+wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker'
 print(f'Working directory: {wdir}\n')
 mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
@@ -872,129 +1018,207 @@ if if_res:
     plt.show()
     exit()
 
-# event experiments
-# twin = timedelta(minutes=5)
-# half a day-long experiments
-twin = timedelta(hours=5)
-# loop over events
-for _, erow in etab.iterrows():
-    # define file extension based on time window length
-    ext = ''
-    if twin == timedelta(minutes=5):
-        ext = '10m'
-    elif twin == timedelta(hours=5):
-        ext = '10h'
-    # read event parameters
-    evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
-    # if evt == '20210617215634852':
-    #     continue
-    if evt != '20210615230854375':
-        exit()
-    epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
-            'eori': datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), 'emag': erow.Magnitude}
-    print(f"{evt} M{epar['emag']:3.1f}")
-    # check whether figure and output file already exist or not
-    if pic == 'AIC':
-        oxml = f"{evt}_{exp}_AIC.{ext}.xml"
-    else:
-        oxml = f"{evt}_{exp}.{ext}.xml"
-    if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") != 0 and \
-            path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") != 0:
-        print()
-        continue
-    # starting and ending times
-    print(f" Time window: {epar['eori'] - twin} \u2013 {epar['eori'] + twin}")
+########################################################################################################################
+# FILE PROCESSING TO BUILD FIGURES
+if_proc = False
+if if_proc:
+    # event experiments
+    # twin = timedelta(minutes=5)
+    # half a day-long experiments
+    twin = timedelta(hours=5)
+    # loop over events
+    for _, erow in etab.iterrows():
+        # define file extension based on time window length
+        ext = ''
+        if twin == timedelta(minutes=5):
+            ext = '10m'
+        elif twin == timedelta(hours=5):
+            ext = '10h'
+        # read event parameters
+        evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
+        if evt == '20210617215634852' or evt == '20211027045305932':
+            continue
+        epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
+                'eori': datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), 'emag': erow.Magnitude}
+        print(f"{evt} M{epar['emag']:3.1f}")
 
-    #######################################################################################################################
-    # RETRIEVE WAVEFORM DATA
-    # retrieve raw miniSEED data
-    mfile = get_traces_deci(evt, epar['eori'], twin)
-    # read miniSEED file
-    isn_traces = read(mfile).merge()
-    print(f" {len(isn_traces)} waveforms")
-
-    #######################################################################################################################
-    # RUN AUTOPICKER
-    # check the autopicker was run
-    if path.exists(f"{wdir}/{idat}/{oxml}") != 0:
-        print(f" Experiment #{exp} already ran for {evt}:")
-        os.system(f"ls -lh {wdir}/{idat}/{oxml}")
-    else:
-        # autopicker command
-        cmd = f"scautopick --ep --config-db {wdir}/config_autop.xml --inventory-db {wdir}/inventory_autop.xml" \
-              f" --playback -I file://{mfile} > {wdir}/{idat}/{oxml}"
-        print(f" Running {ext} experiment #{exp} for {evt}")
-        print(' ' + cmd)
-        os.system(cmd)
-    # read output file
-    if pic == 'AIC':
-        isn_traces, na = read_autopick_xml(f"{wdir}/{idat}/{oxml}", isn_traces, 'P', 'AIC')
-    else:
-        isn_traces, na = read_autopick_xml(f"{wdir}/{idat}/{oxml}", isn_traces, 'P', '')
-    if na < 2:
-        print(' Not enough automatic picks')
-        print()
-        continue
-    else:
-        print(f" {na} automatic picks")
-
-    #######################################################################################################################
-    # RETRIEVE CATALOGUE PICKS
-    nc = 0
-    if ext == '10m':
-        isn_traces, nc = get_catalogue_picks(isn_client, epar['evid'], isn_traces)
-        if nc < 1:
-            print(' No hand picks')
+        #######################################################################################################################
+        # RUN AUTOPICKER
+        # output .xml file name
+        if pic == 'AIC':
+            oxml = f"{evt}_{exp}_AIC.{ext}.xml"
         else:
-            print(f" {nc} hand picks")
+            oxml = f"{evt}_{exp}.{ext}.xml"
+        # check the autopicker was run
+        if path.exists(f"{wdir}/{idat}/{oxml}") != 0:
+            print(f" Experiment #{exp} already ran:")
+            os.system(f"ls -lh {wdir}/{idat}/{oxml}")
+        else:
+            # check the right configuration file is the current one
+            if not filecmp.cmp(f'{wdir}/config_autop.xml', f'{wdir}/config_autop_{exp}.xml'):
+                os.system(f'cp -p {wdir}/config_autop_{exp}.xml {wdir}/config_autop.xml')
+            # autopicker command (using raw .mseed file)
+            cmd = f"scautopick --ep --config-db {wdir}/config_autop.xml --inventory-db {wdir}/inventory_autop.xml" \
+                  f" --playback -I file://{wdir}/{idat}/{evt}.{ext}.raw.mseed > {wdir}/{idat}/{oxml}"
+            print(f" Running {ext} experiment #{exp}:")
+            print(' ' + cmd)
+            os.system(cmd)
 
-    #######################################################################################################################
-    # DATA PRE-PROCESSING
-    # remove trend from all traces
-    isn_traces.detrend('spline', order=3, dspline=500)
-    # add event data to waveforms
-    isn_traces, rtab = add_event_data(isn_traces, epar, vel_mod, isn_inv)
-    # sort according to newly added distance to event
-    isn_traces.sort(['distance'], reverse=True)
+        #######################################################################################################################
+        # RETRIEVE WAVEFORM DATA
+        if path.exists(f"{wdir}/{idat}/{evt}.{ext}.mseed") == 0:
+            # .mseed file name
+            mfile = get_traces_deci(evt, epar['eori'], twin)
+            # read .mseed file
+            isn_traces = read(mfile).merge()
+            # add event data to waveforms
+            isn_traces, rtab = add_event_data(isn_traces, epar, vel_mod, isn_inv)
+            # remove trend from all traces
+            isn_traces.detrend('spline', order=3, dspline=500)
+            # sort according to newly added distance to event
+            isn_traces.sort(['distance'], reverse=True)
+            # write new .mseed file for processed data
+            isn_traces.write(mfile.replace('.raw', ''))
+            print(' Waveform data retrieved and processed:')
+            os.system(f"ls -lh {wdir}/{idat}/{evt}.{ext}.mseed")
+        else:
+            print(' Waveform data already exists:')
+            os.system(f"ls -lh {wdir}/{idat}/{evt}.{ext}.mseed")
+        print()
 
-    #######################################################################################################################
-    # BUILD OUTPUT FILE
-    if ext != '10h' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") == 0:
-        # write to file
-        fout = open(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}", 'w')
-        # write to file
-        if nc > 1:
-            dt_cata = [(row.aarr-row.carr).total_seconds() for _, row in rtab.iterrows()]
-            dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
-            fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
-                       f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
-                       f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} "
-                       f"{np.nanmean(dt_cata):9.4f} {np.nanstd(dt_cata):9.4f} {np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
-        elif nc == 1:
-            dt_cata = [(row.aarr-row.carr).total_seconds() for _, row in rtab.iterrows()]
-            dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
-            fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
-                       f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
-                       f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} "
-                       f"{np.nanmean(dt_cata):9.4f} {np.nan:9.4f} {np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
-        elif nc == 0:
-            dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
-            fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
-                       f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
-                       f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} {np.nan:9.4f} {np.nan:9.4f} "
-                       f"{np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
-        for _, row in rtab.iterrows():
-            fout.write(f"{row.net:2s} {row.stn:6s} {row.loc:2s} {row.chn:3s} {row.dis:9.4f} {datetime.strftime(row.carr, '%Y-%m-%d %H:%M:%S.%f'):s} "
-                       f"{datetime.strftime(row.aarr, '%Y-%m-%d %H:%M:%S.%f'):s} {datetime.strftime(row.tarr, '%Y-%m-%d %H:%M:%S.%f'):s}\n")
-        fout.close()
-    if ext != '10h':
-        rtab = None
-    #######################################################################################################################
-    # BUILD OUTPUT FIGURE
-    # only if figure does not already exist
-    if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") == 0:
-        plot_autopick_evt_sec(isn_traces, fpar, epar, isn_inv, f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
-    print()
+########################################################################################################################
+# FIGURES
+if_plot = True
+if if_plot:
+    # event experiments
+    # twin = timedelta(minutes=5)
+    # half a day-long experiments
+    twin = timedelta(hours=5)
+    # loop over events
+    for _, erow in etab.iterrows():
+        # define file extension based on time window length
+        ext = ''
+        if twin == timedelta(minutes=5):
+            ext = '10m'
+        elif twin == timedelta(hours=5):
+            ext = '10h'
+        # read event parameters
+        evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
+        if evt == '20210617215634852' or evt == '20211027045305932':
+            continue
+        epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
+                'eori': datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), 'emag': erow.Magnitude}
+        print(f"{evt} M{epar['emag']:3.1f}")
+        # check whether figure and output file already exist or not
+        if pic == 'AIC':
+            oxml = f"{evt}_{exp}_AIC.{ext}.xml"
+        else:
+            oxml = f"{evt}_{exp}.{ext}.xml"
+        if (ext == '10m' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") != 0 and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") != 0) or\
+                (ext == '10h' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") != 0):
+            print()
+            continue
+
+        #######################################################################################################################
+        # RETRIEVE AUTOMATIC PICKS
+        # load waveform data to plot (not .raw.mseed)
+        isn_traces = read(f"{wdir}/{idat}/{evt}.{ext}.mseed")
+        # read output file
+        if pic == 'AIC':
+            isn_traces, na = read_autopick_xml(f"{wdir}/{idat}/{oxml}", isn_traces, 'P', 'AIC')
+        else:
+            isn_traces, na = read_autopick_xml(f"{wdir}/{idat}/{oxml}", isn_traces, 'P', '')
+        if na < 2:
+            print(' Not enough automatic picks')
+            print()
+            continue
+        else:
+            print(f" {na} automatic picks")
+        # create DataFrame with automatic picks for time window analysis
+        atab = pd.DataFrame({'net': pd.Series(dtype='string'), 'stn': pd.Series(dtype='string'), 'loc': pd.Series(dtype='string'),
+                             'chn': pd.Series(dtype='string'), 'pick': pd.Series(dtype='datetime64[ms]')})
+        for t in isn_traces:
+            if hasattr(t.stats, 'auto_tt'):
+                for p in t.stats.auto_tt:
+                    atab.loc[atab.shape[0]] = [t.stats.network, t.stats.station, t.stats.location, t.stats.channel, p]
+        # initialise table to contain 30-s time windows with >6 picks
+        wtab = []
+        # look for 30-s time windows with >6 picks
+        tper = pd.date_range(epar['eori']-twin, epar['eori']+twin, freq='30S').to_list()
+        for i in range(len(tper)-1):
+            tab = atab.loc[(atab.pick > tper[i]) & (atab.pick <= tper[i+1])]
+            if not tab.empty and len(tab) > 5:
+                wtab.append(tper[i])
+        #######################################################################################################################
+        # MORE DATA PROCESSING (FOR PLOTTING ONLY)
+        # remove traces with <2 automatic picks (assuming first pick is for event)
+        for t in isn_traces:
+            if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2 or (not hasattr(t.stats, 'auto_tt')):
+                isn_traces.remove(t)
+        # apply taper to all traces
+        isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['taper'], side='left')
+        # apply high-pass filter to all traces
+        isn_traces.filter('highpass', freq=1./fpar['rmhp'])
+        # apply Butterworth band-pass filter to all traces
+        isn_traces.filter('bandpass', freqmin=fpar['bwminf'], freqmax=fpar['bwmaxf'], corners=fpar['bworder'])
+        # downsample data (to avoid memory issues when plotting)
+        isn_traces.resample(1.0, window='hann')
+
+        #######################################################################################################################
+        # RETRIEVE CATALOGUE PICKS
+        nc = 0
+        if ext == '10m':
+            isn_traces, nc = get_catalogue_picks(isn_client, epar['evid'], isn_traces)
+            if nc < 1:
+                print(' No hand picks')
+            else:
+                print(f" {nc} hand picks")
+
+        #######################################################################################################################
+        # BUILD OUTPUT FILE
+        if ext == '10m' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") == 0:
+            # create table for TT residual data if needed
+            _, rtab = add_event_data(isn_traces, epar, vel_mod, isn_inv)
+            # write to file
+            fout = open(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}", 'w')
+            # write to file
+            if nc > 1:
+                dt_cata = [(row.aarr-row.carr).total_seconds() for _, row in rtab.iterrows()]
+                dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
+                fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
+                           f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
+                           f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} "
+                           f"{np.nanmean(dt_cata):9.4f} {np.nanstd(dt_cata):9.4f} {np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
+            elif nc == 1:
+                dt_cata = [(row.aarr-row.carr).total_seconds() for _, row in rtab.iterrows()]
+                dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
+                fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
+                           f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
+                           f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} "
+                           f"{np.nanmean(dt_cata):9.4f} {np.nan:9.4f} {np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
+            elif nc == 0:
+                dt_theo = [(row.aarr-row.tarr).total_seconds() for _, row in rtab.iterrows()]
+                fout.write(f"{epar['eori']} {epar['elat']:9.4f} {epar['elon']:9.4f} {epar['edep']:5.1f} {epar['emag']:4.2f} "
+                           f"{fpar['rmhp']:.1f} {fpar['taper']:4.1f} {fpar['bworder']:1d} {fpar['bwminf']:4.1f} {fpar['bwmaxf']:4.1f} "
+                           f"{fpar['sta']:4.1f} {fpar['lta']:4.1f} {fpar['trigon']:4.1f} {fpar['trigoff']:4.1f} {nc:3d} {np.nan:9.4f} {np.nan:9.4f} "
+                           f"{np.nanmean(dt_theo):9.4f} {np.nanstd(dt_theo):9.4f}\n")
+            for _, row in rtab.iterrows():
+                fout.write(f"{row.net:2s} {row.stn:6s} {row.loc:2s} {row.chn:3s} {row.dis:9.4f} {datetime.strftime(row.carr, '%Y-%m-%d %H:%M:%S.%f'):s} "
+                           f"{datetime.strftime(row.aarr, '%Y-%m-%d %H:%M:%S.%f'):s} {datetime.strftime(row.tarr, '%Y-%m-%d %H:%M:%S.%f'):s}\n")
+            fout.close()
+            rtab = None
+
+        #######################################################################################################################
+        # BUILD OUTPUT FIGURE
+        # add event origin time to trace headers
+        for tr in isn_traces:
+            tr.stats['origin_time'] = epar['eori']
+        # only if figure does not already exist
+        if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") == 0:
+            print(f' {len(isn_traces)} waveforms to plot')
+            plot_autopick_cont_sec(isn_traces, wtab, f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}")
+        isn_traces = None
+        print()
 
 ########################################################################################################################
 # ifyes = False

@@ -564,7 +564,7 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
             # plot marker
             plt.plot([tori, tori], [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
             # display event type
-            plt.text(xpos, 1.01, 'EXP', color='green', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+            plt.text(xpos, 1.03, 'EXP', color='green', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
     # show EMSC events
     tele_client = Client('EMSC')
     # M>5 teleseismic events catalogue
@@ -584,7 +584,7 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
             # plot marker
             plt.plot([tori, tori], [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
             # display event type & magnitude
-            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
+            plt.text(xpos, 1.07, f"M{event.preferred_magnitude().mag:3.1f}",
                      color='purple', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
     # M>3 regional events catalogue
     evt_lst2 = []
@@ -603,18 +603,18 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
             # plot marker
             plt.plot([tori, tori], [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
             # display event type & magnitude
-            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
+            plt.text(xpos, 1.05, f"M{event.preferred_magnitude().mag:3.1f}",
                      color='orange', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
     # display total number of stations
-    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
     # display total number of local events
-    plt.text(1.00, 1.01, f"Nl={len(evt_lst)-n_exp}", ha='left', va='bottom', color='red', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.01, f"Nl={len(evt_lst)-n_exp}", ha='left', va='bottom', color='red', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
     # display total number of blasts
-    plt.text(1.03, 1.01, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.03, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
     # display total number of regional events
-    plt.text(1.06, 1.01, f"Nr={len(evt_lst2)}", ha='left', va='bottom', color='orange', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.05, f"Nr={len(evt_lst2)}", ha='left', va='bottom', color='orange', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
     # display total number of teleseismic events
-    plt.text(1.09, 1.01, f"Nt={len(evt_lst1)}", ha='left', va='bottom', color='purple', fontsize=15, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.07, f"Nt={len(evt_lst1)}", ha='left', va='bottom', color='purple', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
     # initialise counter
     n_trace = 0
     # loop over stream channels
@@ -642,9 +642,8 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
             for at in trace.stats.auto_tt:
                 plt.plot([at, at], [n_trace-.5, n_trace+.5], color='blue', label='Autopick')
     # 30-s time windows with >6 picks
-    # plt.gca().fill_betweenx([0, n_trace+1], datetime.strptime('2021-06-15 21:00:00', '%Y-%m-%d %H:%M:%S'), datetime.strptime('2021-06-15 22:00:00', '%Y-%m-%d %H:%M:%S'), color='red', alpha=.5)
     for win in win_tab:
-        plt.arrow(win+timedelta(seconds=15.), n_trace+1, 0., -.5, color='red')
+        plt.gca().fill_betweenx([0, n_trace+1], win-timedelta(minutes=2.5), win+timedelta(minutes=2.5), color='red', alpha=.5)
     # set y-axis limits
     plt.gca().set_ylim([0, n_trace+1])
     # remove y-axis tick labels
@@ -652,14 +651,17 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     # set x-axis font size
     plt.gca().tick_params(axis='x', which='major', labelsize=10)
     # save figure
-    mpld3.save_html(fig, open(fig_name, 'w'))
+    fid = open(fig_name, 'w')
+    mpld3.save_html(fig, fid)
     print(f" Figure saved: {fig_name}")
+    plt.close()
+    fid.close()
     return
 
 
 ########################################################################################################################
 # input parameters
-exp = 0
+exp = 3
 ntw = 'IS'
 chn = '(B|H|E)(H|N)Z'
 pic = 'AIC'
@@ -671,8 +673,6 @@ mgrd = [29., 34., 33., 37.]
 rgrd = [23., 43., 25., 45.]
 vel_mod = 'gitt05'
 
-# # retrieve username
-# user_name = pwd.getpwuid(os.getuid())[0]
 # working directory
 # wdir = f'/home/{user_name}/GoogleDrive/Research/GSI/Autopicker'
 # wdir = f'/home/lewis/Documents/Research/Autopicker'
@@ -1219,384 +1219,3 @@ if if_plot:
             plot_autopick_cont_sec(isn_traces, wtab, f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}")
         isn_traces = None
         print()
-
-########################################################################################################################
-# ifyes = False
-# if ifyes:
-#     # select station
-#     stn = 'MRON'
-#     S = isn_traces.select(station=stn)[0]
-#     # figure
-#     fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, squeeze=True)
-#     ax1.grid(which='both', axis='both')
-#     ax2.grid(which='both', axis='both')
-#     # plot velocity waveform
-#     T = pd.date_range(datetime.strptime(str(S.stats.starttime), '%Y-%m-%dT%H:%M:%S.%fZ'),
-#                       datetime.strptime(str(S.stats.endtime), '%Y-%m-%dT%H:%M:%S.%fZ'), freq='%fL' % S.stats.delta*1000).to_list()
-#     h11, = ax1.plot(T, S.data, color='red', alpha=.7, label='Velocity')
-#     # plot STA/LTA waveform
-#     stalta = sta_lta(S.data, sta[exp] * S.stats.sampling_rate, lta[exp] * S.stats.sampling_rate)
-#     h21, = ax2.plot(T, stalta, color='blue', alpha=.7, label='STA/LTA')
-#     # plot thresholds
-#     h22, = ax2.plot(ax2.get_xlim(), [trigon[exp], trigon[exp]], color='pink', label='TrigOn')
-#     h23, = ax2.plot(ax2.get_xlim(), [trigoff[exp], trigoff[exp]], color='orange', label='TrigOff')
-#     # picks from autopicker
-#     ii = atab.index[(atab.sta == S.stats.station) & (atab.net == S.stats.network) & (atab.chn == S.stats.channel)].to_list()
-#     h12 = []
-#     h24 = []
-#     for i in range(len(ii)):
-#         h12, = ax1.plot([atab.pic[ii[i]], atab.pic[ii[i]]], [-np.amax(S.data), np.amax(S.data)], color='purple', label='Autopick')
-#         h24, = ax2.plot([atab.pic[ii[i]], atab.pic[ii[i]]], [0., np.amax(stalta)], color='purple', label='Autopick')
-#     # index of max. STA/LTA value
-#     ax2.text(T[np.argmax(stalta)], np.amax(stalta), '%.1f' % np.amax(stalta), fontsize=8, ha='right', va='center', color='red')
-#     # titles, labels & legends
-#     ax2.set_title('%s.%s.%s.%s' % (S.stats.network, S.stats.station, S.stats.location, S.stats.channel))
-#     ax1.set_xlim([0., 100.])
-#     ax2.set_xlim([0., 100.])
-#     ax1.set_ylabel('Velocity', fontsize=15)
-#     ax2.set_ylabel('STA/LTA', fontsize=15)
-#     ax2.set_xlabel('Time - OT [s]', fontsize=15)
-#     ax1.legend(handles=[h11, h12], loc='upper left')
-#     ax2.legend(handles=[h21, h22, h23, h24], loc='upper left')
-#     # show autopicker parameters
-#     microsecond = epar['eori'].microsecond
-#     millisecond = int(round(microsecond / 1000.))
-#     plt.gcf().text(.5, .98, '%s \u2013 %.2f km \u2013 M%3.1f' % (
-#         epar['eori'].strftime('%d/%m/%Y %H:%M:%S.%f').replace('.{:06d}'.format(microsecond), '.{:03d}'.format(millisecond)),
-#         epar['edep'], epar['emag']), fontsize=15, fontweight='bold', ha='center', va='center')
-#     plt.gcf().text(.5, .95, 'HP: %.2f [s] \u2013 Taper: %.2f [s] \u2013 BP: %i / %.2f / %.2f [Hz]'.
-#                    format(fpar['rmhp'], fpar['taper'], fpar['bworder'], fpar['bwminf'], fpar['bwmaxf']),
-#                    fontsize=15, fontweight='bold', ha='center', va='center')
-#     plt.gcf().text(.5, .92, 'STA/LTA: %.2f / %.2f [s] \u2013 Trigger: %.2f / %.2f'.
-#                    format(fpar['sta'], fpar['lta'], fpar['trigon'], fpar['trigoff']), fontsize=15, fontweight='bold', ha='center', va='center')
-#     plt.show()
-#     exit()
-
-
-# # write to file simultaneously to making figure
-# fout = open('%s/%s_%i.txt' % (wdir, evt, exp), 'w')
-# ifmap = True
-# ########################################################################################################################
-# # FIGURE
-# XLim1 = [-1., max(ttab.theo_tt) + 80.]
-# XLim2 = [-7., 50.]
-# XLim3 = [-2., 2.]
-# if ifmap:
-#     fig, (ax1, ax2, ax3, ax4) = plt.subplots(nrows=1, ncols=4, squeeze=True, gridspec_kw={'width_ratios': [1, 2, 1, 1]})
-# else:
-#     ax3 = []
-#     ax4 = []
-#     fig, (ax1, ax2) = plt.subplots(nrows=1, ncols=2, squeeze=True)
-# plt.show(block=False)
-# # AXIS 1: VELOCITY WAVEFORMS
-# ax1.grid(which='both', axis='both')
-# ax1.set_xlim(XLim1)
-# # AXIS 2: VELOCITY STA/LTA's
-# ax2.grid(which='both', axis='both')
-# ax2.set_xlim(XLim2)
-# if ifmap:
-#     # AXIS 3: RESIDUAL OVER DISTANCE PLOT
-#     ax3.grid(which='both', axis='both')
-#     ax3.set_xlim(XLim3)
-#     # AXIS 4: LOCAL STATIONS & EVENT MAP
-#     M = Basemap(projection='cyl', llcrnrlon=igrd[2], llcrnrlat=igrd[0], urcrnrlon=igrd[3], urcrnrlat=igrd[1], ax=ax4)
-#     # draw map
-#     M.drawmapboundary(fill_color='none')
-#     M.fillcontinents(color='0.8', lake_color='white')
-#     # show parallels and meridians (labels = [left,right,top,bottom])
-#     M.drawparallels(np.arange(20., 40., 1.), labels=[False, True, True, False])
-#     M.drawmeridians(np.arange(20., 40., 1.), labels=[True, False, False, True])
-# else:
-#     M = []
-# n = 0
-# n1 = 0
-# n2 = 0
-# nn = 0
-# k1 = None
-# k2 = None
-# lbl = []
-# tres = []
-# h1 = []
-# h2 = []
-# h3 = []
-# h4 = []
-# h5 = []
-# h6 = []
-# h7 = []
-# if ifmap:
-#     h8 = []
-#     h9 = []
-# for i in range(len(isn_traces)):
-#     n += 1
-#     # sorted indexes
-#     ii = sorted_ind[i]
-#     # station information
-#     lbl.append('%s.%s.%s.%s' % (isn_traces[ii].stats.network, isn_traces[ii].stats.station,
-#                                 isn_traces[ii].stats.location, isn_traces[ii].stats.channel))
-#     # plot waveform
-#     T = isn_traces[ii].times('relative', reftime=UTCDateTime(eori))
-#     h1, = ax1.plot(T, isn_traces[ii].data / np.amax(isn_traces[ii].data) + n, color='grey', alpha=.7, label='Velocity')
-#     # plot STA/LTA waveform
-#     stalta = sta_lta(isn_traces[ii].data, sta[exp] * isn_traces[ii].stats.sampling_rate, lta[exp] * isn_traces[ii].stats.sampling_rate)
-#     # h2, = ax2.plot(T - np.timedelta64(int(np.floor(ttheo[ii])), 's') - np.timedelta64(int((ttheo[ii]-np.floor(ttheo[ii]))*1e6), '[ns]'),
-#     #                stalta / np.amax(stalta) + n, color='grey', alpha=.7, label='STA/LTA')
-#     h2, = ax2.plot(T - ttheo[ii], stalta / np.amax(stalta) + n, color='grey', alpha=.7, label='STA/LTA')
-#     # # index of max. STA/LTA value
-#     # ax2.text(ax2.get_xlim()[1], n, '{:.1f}' % (np.amax(stalta)), fontsize=8, ha='left', va='center', color='red', clip_on=False)
-#     # ax2.plot([T[np.argmax(stalta)] - ttheo[ii], T[np.argmax(stalta)] - ttheo[ii]], [n-1, n+1], color='red')
-#     # theoretical travel time
-#     if ttheo[ii] != '':
-#         h3, = ax1.plot([ttheo[ii], ttheo[ii]], [n - 1, n + 1], color='blue', linestyle='dotted', label='iasp91')
-#     # show hand picks
-#     k1 = None
-#     if not htab[(htab.sta == isn_traces[ii].stats.station)].empty:
-#         k1 = htab.index[(htab.sta == isn_traces[ii].stats.station) & (htab.net == isn_traces[ii].stats.network)
-#                         & (htab.chn == isn_traces[ii].stats.channel)].to_list()
-#         if len(k1) == 1:
-#             k1 = k1[0]
-#             # print('One hand pick: %s.%s.%s.%s (%.2f s)' % (htab.net[k1], htab.sta[k1], htab.lct[k1], htab.chn[k1], htab.pic[k1]))
-#         else:
-#             # print('No hand pick: %s' % (stream[ii].stats.station))
-#             continue
-#         if k1 is not None:
-#             n1 += 1
-#             # show on both axes
-#             h4, = ax1.plot([htab.pic[k1], htab.pic[k1]], [n - 1, n + 1], color='orange', label='Handpick')
-#             h5, = ax2.plot([htab.pic[k1] - ttheo[ii], htab.pic[k1] - ttheo[ii]], [n - 1, n + 1], color='orange', label='Handpick')
-#             if ifmap:
-#                 # station name (MAP)
-#                 for j in range(len(isn_inv.networks[0])):
-#                     if isn_traces[ii].stats.station == isn_inv.networks[0].stations[j].code:
-#                         x, y = M(isn_inv.networks[0].stations[j].longitude, isn_inv.networks[0].stations[j].latitude)
-#                         ax4.text(x, y - .05, isn_traces[ii].stats.station, ha='center', va='center', fontsize=8, color='orange', label='Autopick')
-#             # pick time
-#             t1 = ax2.text(htab.pic[k1] - 2 - ttheo[ii], n + .25, '%.2f s' % (htab.pic[k1]), ha='right', va='center', color='orange', fontsize=8)
-#             t1.set_bbox(dict(facecolor='white', alpha=.6, edgecolor='orange'))
-#     # show automatic picks
-#     k2 = None
-#     if not atab[(atab.sta == isn_traces[ii].stats.station)].empty:
-#         # indexing
-#         P = atab[(atab.sta == isn_traces[ii].stats.station) & (atab.net == isn_traces[ii].stats.network) & (atab.chn == isn_traces[ii].stats.channel)]
-#         P = P.assign(tdiff=pd.Series([None] * len(P), dtype='float'))
-#         if P.empty:
-#             # print('No automatic pick: {:s}'.format(stream[ii].stats.station))
-#             continue
-#         if len(P) > 1:
-#             k2 = None
-#             # print('Multiple automatic picks: ({:n})' % (len(kk)))
-#             P['tdiff'] = [abs(x - ttheo[ii]) for x in P.pic.to_list()]
-#             for k in P.index:
-#                 # print(' %s.%s.%s.%s (%.2f s)' % (atab.net[kk[k]], atab.sta[kk[k]], atab.lct[kk[k]], atab.chn[kk[k]], atab.pic[kk[k]]))
-#                 if P.pic[k] > 0 and k == P['tdiff'].idxmin():
-#                     k2 = k
-#                     break
-#         else:
-#             k2 = P.index[0]
-#             # print('One automatic pick: %s.%s.%s.%s (%.2f s)' % (atab.net[k2], atab.sta[k2], atab.lct[k2], atab.chn[k2], atab.pic[k2]))
-#         n2 += 1
-#         for k in P.index:
-#             # show on both axes
-#             h6, = ax1.plot([P.pic[k], P.pic[k]], [n - 1, n + 1], color='purple', label='Autopick')
-#             ax1.text(ax1.get_xlim()[1], n, P.sta[k], color='purple', fontsize=6, ha='left', va='center')
-#             h7, = ax2.plot([P.pic[k] - ttheo[ii], P.pic[k] - ttheo[ii]], [n - 1, n + 1], color='purple', label='Autopick')
-#             if ifmap:
-#                 # station name (MAP)
-#                 for j in range(len(isn_inv.networks[0])):
-#                     if isn_traces[ii].stats.station == isn_inv.networks[0].stations[j].code:
-#                         x, y = M(isn_inv.networks[0].stations[j].longitude, isn_inv.networks[0].stations[j].latitude)
-#                         ax4.text(x, y + .05, isn_traces[ii].stats.station, ha='center', va='center', fontsize=8, color='purple', label='Autopick')
-#             if XLim2[0] <= P.pic[k] - ttheo[ii] <= XLim2[1]:
-#                 # pick time
-#                 t2 = ax2.text(P.pic[k] + 2 - ttheo[ii], n + .25, '%.2f s' % (P.pic[k]), ha='center', va='center', color='purple', fontsize=8)
-#                 t2.set_bbox(dict(facecolor='white', alpha=.6, edgecolor='purple'))
-#                 # pick SNR
-#                 t3 = ax2.text(25., n, '%.2f' % (P.snr[k]), ha='center', va='center', fontsize=8)
-#                 t3.set_bbox(dict(facecolor='white', alpha=.6))
-#     # residual w.r.t. hand pick
-#     if k1 is not None and k2 is not None:
-#         # table for residuals (for statistics)
-#         tres.append(atab.pic[k2] - htab.pic[k1])
-#         # show value
-#         t4 = ax2.text(35., n, '%.2f s' % (atab.pic[k2] - htab.pic[k1]), ha='center', va='center', fontsize=8)
-#         t4.set_bbox(dict(facecolor='white', alpha=.6))
-#         if ifmap:
-#             # residual plot
-#             ax3.plot(atab.pic[k2] - htab.pic[k1], n, 'o', markersize=7, mfc='grey', mec='none', alpha=.7)
-#             # station names
-#             ax3.text(atab.pic[k2] - htab.pic[k1] - .1, n, isn_traces[ii].stats.station, ha='right', va='center', fontsize=8)
-#         nn += 1
-# # statistics on residuals
-# if ifmap and nn > 1:
-#     ax3.text(.95 * XLim3[0], 1, '<\u0394t> = %.2f \u00B1 %.2f [s]' % (statistics.mean(tres), statistics.stdev(tres)), fontsize=10, fontweight='bold')
-# # write to file
-# if nn > 1:
-#     fout.write('%s %f %f %i %f %f %f %f %f %f %i %f %f\n' % (evt, rmhp[exp], taper[exp], bworder[exp], bwminf[exp], bwmaxf[exp], sta[exp], lta[exp],
-#                                                              trigon[exp], trigoff[exp], nn, statistics.mean(tres), statistics.stdev(tres)))
-# elif nn == 1:
-#     fout.write('%s %f %f %i %f %f %f %f %f %f %i %f %s\n' % (evt, rmhp[exp], taper[exp], bworder[exp], bwminf[exp], bwmaxf[exp], sta[exp], lta[exp],
-#                                                              trigon[exp], trigoff[exp], nn, statistics.mean(tres), 'NaN'))
-# elif nn == 0:
-#     fout.write('%s %f %f %i %f %f %f %f %f %f %i %s %s\n' % (evt, rmhp[exp], taper[exp], bworder[exp], bwminf[exp], bwmaxf[exp], sta[exp], lta[exp],
-#                                                              trigon[exp], trigoff[exp], nn, 'NaN', 'NaN'))
-# fout.close()
-# # axis limits
-# ax1.set_ylim([0, n + 1])
-# ax2.set_ylim([0, n + 1])
-# if ifmap:
-#     ax3.set_ylim([0, n + 1])
-# # legend
-# if not h6 and not h7:
-#     ax1.legend(handles=[h1, h3, h4], loc='upper right')
-#     ax2.legend(handles=[h2, h5], loc='lower right')
-# else:
-#     ax1.legend(handles=[h1, h3, h4, h6], loc='upper right')
-#     ax2.legend(handles=[h2, h5, h7], loc='lower right')
-# ax2.text(25., 1.01 * ax1.get_ylim()[1], 'S/N', ha='center', va='center', fontsize=10)
-# ax2.text(35., 1.01 * ax1.get_ylim()[1], '\u0394t (N=%i)' % nn, ha='center', va='center', fontsize=10)
-# # station and pick numbers
-# ax1.text(XLim1[0] - .025 * XLim1[1], 1.01 * ax1.get_ylim()[1], 'N=%i' % i, ha='right', va='center', fontsize=10)
-# ax2.text(5., 1.01 * ax1.get_ylim()[1], 'N=%i' % n2, ha='center', va='center', fontsize=10, color='purple')
-# ax2.text(-5., 1.01 * ax1.get_ylim()[1], 'N=%i' % n1, ha='center', va='center', fontsize=10, color='orange')
-# # replace numerical tick labels with station names
-# ax1.set_yticks(np.arange(1, n + 1, 1))
-# ax1.set_yticklabels(lbl, fontsize=6)
-# ax2.set_yticks(np.arange(1, n + 1, 1))
-# ax2.set_yticklabels([])
-# if ifmap:
-#     ax3.set_yticklabels([])
-# # axis labels
-# ax1.set_xlabel('Time - OT [s]', fontsize=20, fontweight='bold')
-# ax1.set_ylabel('Station', fontsize=20, fontweight='bold')
-# ax2.set_xlabel('Time - Tp(iasp91) [s]', fontsize=20, fontweight='bold')
-# if ifmap:
-#     ax3.set_xlabel('\u0394t [s]', fontsize=20, fontweight='bold')
-#     # MAP
-#     # fault lines
-#     f = open('%s/../Data/mapping/Sharon20/Main_faults_shapefile_16.09.2020_1.xyz' % wdir, 'r')
-#     flts = f.readlines()
-#     f.close()
-#     X = []
-#     Y = []
-#     for i in range(len(flts)):  # len(flts)
-#         if re.search('NaN', flts[i]):
-#             X = []
-#             Y = []
-#         elif i < len(flts) - 1 and re.search('NaN', flts[i + 1]):
-#             f, = ax4.plot(X, Y, '.6', label='Faults')
-#         else:
-#             line = flts[i].split()
-#             x, y = M(float(line[0]), float(line[1]))
-#             X.append(x)
-#             Y.append(y)
-#     # stations
-#     hm1 = []
-#     hm2 = []
-#     for i in range(len(isn_traces)):
-#         # sorted index
-#         ii = sorted_ind[i]
-#         for j in range(len(isn_inv.networks[0])):
-#             if isn_traces[ii].stats.station == isn_inv.networks[0].stations[j].code:
-#                 x, y = M(isn_inv.networks[0].stations[j].longitude, isn_inv.networks[0].stations[j].latitude)
-#                 if isn_traces[ii].stats.network == 'IS':
-#                     hm1, = ax4.plot(x, y, 'b^', markersize=5, alpha=.7, mec='none', label=isn_traces[ii].stats.network)
-#                 elif isn_traces[ii].stats.network == 'GE':
-#                     hm2, = ax4.plot(x, y, 'sg', markersize=7, mfc='none', label=isn_traces[ii].stats.network)
-#     # event
-#     x, y = M(elon, elat)
-#     e, = ax4.plot(x, y, 'r*', markersize=15, markeredgecolor='black', label='Event')
-#     if emag:
-#         ax4.text(x + .1, y - .1, 'M%3.1f' % emag, ha='left', va='bottom', color='red', fontweight='bold')
-#     # legend
-#     if not hm1:
-#         hm = [hm2, e, f]
-#     elif not hm2:
-#         hm = [hm1, e, f]
-#     else:
-#         hm = [hm1, hm2, e, f]
-#     ax4.legend(handles=hm, loc='upper left')
-# # show autopicker parameters
-# microsecond = eori.microsecond
-# millisecond = int(round(microsecond / 1000.))
-# plt.gcf().text(.5, .98, '%s \u2013 %.2f km' % (
-#     eori.strftime('%d/%m/%Y %H:%M:%S.%f').replace('.{:06d}'.format(microsecond), '.{:03d}'.format(millisecond)),
-#     edep), fontsize=15, fontweight='bold', ha='center', va='center')
-# plt.gcf().text(.5, .95, 'HP: %.2f [s] \u2013 Taper: %.2f [s] \u2013 BP: %i / %.2f / %.2f [Hz]'
-#                % (rmhp[exp], taper[exp], bworder[exp], bwminf[exp], bwmaxf[exp]), fontsize=15, fontweight='bold', ha='center', va='center')
-# plt.gcf().text(.5, .92, 'STA/LTA: %.2f / %.2f [s] \u2013 Trigger: %.2f / %.2f'
-#                % (sta[exp], lta[exp], trigon[exp], trigoff[exp]), fontsize=15, fontweight='bold', ha='center', va='center')
-# # maximise figure
-# mng = plt.get_current_fig_manager()
-# mng.full_screen_toggle()
-# # adjust plots
-# fig.subplots_adjust(left=.07, right=.98, wspace=.1)
-# # show figure
-# plt.show()
-
-######################################################################################################################
-# AUTOPICKER CONFIGURATION
-# # autopicker picking configuration
-# # if pic == 'AIC':
-# #     os.system('mv $SEISCOMP_ROOT/etc/scautopick.aic $SEISCOMP_ROOT/etc/scautopick.cfg')
-# # else:
-# #     os.system('rm $SEISCOMP_ROOT/etc/scautopick.cfg')
-# # autopicker detection configuration
-# if exp == 0:
-#     cfg = 'config.xml'
-#     # check if default autopicker configuration file exists
-#     if path.exists('%s/%s' % (wdir, cfg)) != 0 or path.exists('%s/%s' % (wdir, cfg)) == 0:
-#         # if path.exists('%s/%s' % (wdir, cfg)) != 0:
-#         #     print('Default autopicker configuration file already exists:')
-#         #     os.system('ls -lh %s/%s' % (wdir, cfg))
-#         #     print()
-#         # else:
-#         cmd = 'scxmldump -fC -o %s/Autopicker/%s -d postgresql://' % (wdir, cfg)
-#         print(cmd)
-#         print()
-# else:
-#     cfg = 'config_%s_%i.xml' % (evt, exp)
-#     if path.exists('%s/%s' % (wdir, cfg)) != 0 or path.exists('%s/%s' % (wdir, cfg)) == 0:
-#         # if path.exists('%s/%s' % (wdir, cfg)) != 0:
-#         #     print('Configuration file for event %s and experiment #{:n} already exists:' % (evt, exp))
-#         #     os.system('ls -lh %s/%s' % (wdir, cfg))
-#         #     print()
-#         # else:
-#         # read default autopicker configuration file
-#         ETree.register_namespace('', "http://geofon.gfz-potsdam.de/ns/seiscomp3-schema/0.12")
-#         tree = ETree.parse('%s/config.bak' % wdir)
-#         root = tree.getroot()
-#         # loop over stations
-#         n = 0
-#         for i in range(len(root[0])):
-#             if re.search('scautopick', str(root[0][i].attrib)):
-#                 s = re.search("'ParameterSet/trunk/Station/(.*?)/scautopick',", str(root[0][i].attrib)).group(1)
-#                 # loop over station parameters to modify
-#                 for j in range(len(root[0][i])):
-#                     if len(root[0][i][j]) != 0:
-#                         if root[0][i][j][0].text == 'trigOn':
-#                             # threshold/trigger on
-#                             root[0][i][j][1].text = '%g' % fpar['trigon']
-#                         if root[0][i][j][0].text == 'trigOff':
-#                             # threshold/trigger off
-#                             root[0][i][j][1].text = '%g' % fpar['trigoff']
-#                         if root[0][i][j][0].text == 'detecFilter':
-#                             # list of filters
-#                             x = root[0][i][j][1].text.split('>>')
-#                             # running-mean high-pass filter
-#                             s = re.sub(r'\((.*?)\)', r'(%g)' % fpar['rmhp'], x[0])
-#                             root[0][i][j][1].text = root[0][i][j][1].text.replace(x[0], s)
-#                             # taper
-#                             s = re.sub(r'\((.*?)\)', r'(%g)' % fpar['taper'], x[1])
-#                             root[0][i][j][1].text = root[0][i][j][1].text.replace(x[1], s)
-#                             # BW band-pass filter
-#                             s = re.sub(r'\((.*?)\)', r'(%i,%g,%g)' % (fpar['bworder'], fpar['bwminf'], fpar['bwmaxf']),
-#                                        x[2])
-#                             root[0][i][j][1].text = root[0][i][j][1].text.replace(x[2], s)
-#                             # STA/LTA filter
-#                             s = re.sub(r'\((.*?)\)', r'(%g,%g)' % (fpar['sta'], fpar['lta']), x[3])
-#                             root[0][i][j][1].text = root[0][i][j][1].text.replace(x[3], s)
-#                 n += 1
-#         # write new configuration file
-#         tree.write('%s/%s' % (wdir, cfg), xml_declaration=True, method="xml", encoding="UTF-8")
-#         print('Configuration file for experiment #%i written:' % exp)
-#         os.system('ls -lh %s/%s' % (wdir, cfg))
-#         print()

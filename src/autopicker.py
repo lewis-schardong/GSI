@@ -83,9 +83,9 @@ def process_mseed(mseed_in, sta_inv, filt_param):
     try:
         stream.remove_response(output='VEL', inventory=sta_inv)
     except:
-        for t in stream:
-            print(f'{t.stats.network}.{t.stats.station}.{t.stats.location}.{t.stats.channel}')
-            t.remove_response(output='VEL', inventory=sta_inv)
+        for trace in stream:
+            print(f'{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}')
+            trace.remove_response(output='VEL', inventory=sta_inv)
             exit()
     # apply taper to all traces
     stream.taper(max_percentage=.5, type='cosine', max_length=filt_param['taper'], side='left')

@@ -30,9 +30,9 @@ def get_traces_deci(evt_id, ori_time, time_win):
     """
     # define file extension based on time window length
     f_ext = ''
-    if twin == timedelta(minutes=5):
+    if time_win == timedelta(minutes=5):
         f_ext = '10m'
-    elif twin == timedelta(hours=5):
+    elif time_win == timedelta(hours=5):
         f_ext = '10h'
     # load miniSEED data
     mseed = f'{wdir}/{idat}/{evt_id}.{f_ext}.raw.mseed'
@@ -720,37 +720,6 @@ print(f"BW: {fpar['bworder']} / {fpar['bwminf']:.2f} / {fpar['bwmaxf']:.2f}")
 print(f"Triggers: {fpar['trigon']:.2f} / {fpar['trigoff']:.2f}")
 print()
 
-# # choosing frequencies based on experiments
-# if exp > 5:
-#     if epar['emag'] >= 3.0:
-#         fmin = 3.0
-#         fmax = 6.0
-#     else:
-#         fmin = 4.0
-#         fmax = 8.0
-#     fpar['bwminf'] = fmin
-#     fpar['bwmaxf'] = fmax
-# if exp > 10:
-#     if epar['emag'] >= 3.0:
-#         swin = 2.0
-#         lwin = 80.0
-#     else:
-#         swin = 0.2
-#         lwin = 10.0
-#     fpar['sta'] = swin
-#     fpar['lta'] = lwin
-#
-# # import station inventory (SEISCOMP)
-# if path.exists('%s/inventory_sc.xml' % (wdir)) != 0:
-#     print('ISN inventory file already exists:')
-#     os.system('ls -lh %s/inventory_sc.xml' % (wdir))
-#     print()
-# else:
-#     cmd = 'scxmldump -fI -o %s/inventory_sc.xml -d postgresql://' % (wdir)
-#     print(cmd)
-#     print()
-#     os.system(cmd)
-
 # retrieve station inventory
 if path.exists(f"{wdir}/inventory.xml") != 0:
     print('ISN inventory file already exists:')
@@ -1149,6 +1118,7 @@ if if_plot:
             tab = atab.loc[(atab.pick > tper[i]) & (atab.pick <= tper[i+1])]
             if not tab.empty and len(tab) > 5:
                 wtab.append(tper[i])
+
         #######################################################################################################################
         # MORE DATA PROCESSING (FOR PLOTTING ONLY)
         # remove traces with <2 automatic picks (assuming first pick is for event)

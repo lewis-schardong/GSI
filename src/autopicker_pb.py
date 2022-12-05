@@ -483,6 +483,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
         k_apic = None
         # make sure station has picks
         if hasattr(trace.stats, 'auto_tt') and trace.stats.auto_tt:
+
             # time difference between automatic picks and theoretical arrival
             tdif = [abs((xx - trace.stats.theo_tt).total_seconds()) for xx in trace.stats.auto_tt]
             # initialise counter
@@ -601,8 +602,8 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             axis4.text(evt_param['elon']+2., evt_param['elat'], f"M{evt_param['emag']:3.1f}",
                        ha='left', va='center', color='red', clip_on=True, fontsize=8)
     # figure title
-    tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S.%f')} \u2013 " \
-           f"{event[0].preferred_origin().time.strftime('%d/%m/%Y %H:%M:%S.%f')} " \
+    tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S')} \u2013 " \
+           f"{event[0].preferred_origin().time.strftime('%d/%m/%Y %H:%M:%S')} " \
            f"({event[0].preferred_origin().time_errors.uncertainty:.2f} s)"
     tit2 = f"[{evt_param['elat']:.2f},{evt_param['elon']:.2f}] \u2013 [{event[0].preferred_origin().latitude:.2f}," \
            f"{event[0].preferred_origin().longitude:.2f}] ([{event[0].preferred_origin().latitude_errors.uncertainty:.2f}," \

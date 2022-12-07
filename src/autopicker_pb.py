@@ -10,7 +10,6 @@ from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import pandas as pd
 import numpy as np
-import statistics
 from matplotlib.dates import DateFormatter
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ETree
@@ -135,7 +134,11 @@ def get_catalogue_picks(client, evt_id, stream):
     """
     npic = 0
     # retrieve event data
-    event = client.get_events(eventid=evt_id, includearrivals=True)[0]
+    event = client.get_events(eventid=evt_id, includearrivals=True)
+    if event:
+        event = event[0]
+    else:
+        return stream, 0
     for pik in event.picks:
         if pik.phase_hint[0] == 'P':
             if pik.waveform_id.location_code is None:
@@ -378,7 +381,15 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     """
     # event info. from playback associator
     event = read_events(f"{wdir}/{oxml.replace('_picks', '_events')}")
-    print(f' {len(event)} event(s) were found')
+    print(f' {len(event)} event(s) found')
+    if event:
+        if len(event) > 1:
+            tdif = [abs(evt_param['eori']-datetime.strptime(str(e.preferred_origin().time),
+                                                            '%Y-%m-%dT%H:%M:%S.%fZ')).total_seconds() for e in event]
+            event = event[tdif.index(min(tdif))]
+            print(f"  Min. time difference: {min(tdif)} s")
+        else:
+            event = event[0]
     # time difference with theory for best autopick
     tlim = 5.
     # plotting mode
@@ -413,6 +424,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # faults
+    # fid = open('/home/lewis/.seiscomp/bna/ActiveFaults/activefaults.bna', 'r')
     fid = open('/home/sysop/.seiscomp/bna/ActiveFaults/activefaults.bna', 'r')
     flts = fid.readlines()
     fid.close()
@@ -427,6 +439,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             l_line = flts[iii].split(',')
             flt.loc[flt.shape[0]] = [float(l_line[1]), float(l_line[0])]
     # quarries
+    # fid = open('/home/lewis/.seiscomp/bna/Quarries/quarries.bna', 'r')
     fid = open('/home/sysop/.seiscomp/bna/Quarries/quarries.bna', 'r')
     flts = fid.readlines()
     fid.close()
@@ -452,6 +465,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     h2 = []
     h3 = []
     h4 = []
+    h5 = []
     # initialise tables for map legend
     hm1 = []
     hm2 = []
@@ -483,14 +497,32 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
         k_apic = None
         # make sure station has picks
         if hasattr(trace.stats, 'auto_tt') and trace.stats.auto_tt:
-
             # time difference between automatic picks and theoretical arrival
             tdif = [abs((xx - trace.stats.theo_tt).total_seconds()) for xx in trace.stats.auto_tt]
             # initialise counter
             n_pic = 0
             # loop over all picks for channel
             for pick in trace.stats.auto_tt:
-                h4, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='purple', label='Automatic')
+                pid = f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}"
+                fnd = False
+                for a in event.preferred_origin().arrivals:
+                    if re.search(pid, str(a.pick_id)):
+                        rid = str(a.resource_id).replace(f"_{str(event.preferred_origin().resource_id).replace('smi:org.gfz-potsdam.de/geofon/', '')}", '')
+                        for p in event.picks:
+                            if rid == p.resource_id and pick == datetime.strptime(str(p.time), '%Y-%m-%dT%H:%M:%S.%fZ'):
+                                fnd = True
+                                break
+                        if fnd:
+                            break
+                if fnd:
+                    # show picks used in location
+                    h4, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='red', label='Auto. arrivals')
+                    # right-hand side marker to quickly know which station has picks
+                    axis1.plot(1.01, n_trace/(len(stream)+1), 'o', markersize=5, mec='red', mfc='none',
+                               alpha=.7, clip_on=False, transform=axis1.transAxes)
+                else:
+                    # show picks NOT used in location
+                    h5, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='purple', label='Auto. picks')
                 # right-hand side marker to quickly know which station has picks
                 axis1.plot(1.01, n_trace/(len(stream)+1), 'o', markersize=5, mfc='purple', mec='none',
                            alpha=.7, clip_on=False, transform=axis1.transAxes)
@@ -526,18 +558,21 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             # table for residuals (for statistics)
             theo_tab.append((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds())
             # residual plot
-            axis2.plot((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds(), n_trace, 'o', markersize=5, mfc='blue', mec='none', alpha=.7)
+            axis2.plot((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds(), n_trace,
+                       'o', markersize=5, mfc='blue', mec='none', alpha=.7)
+    # display catalogue origin time
+    axis1.plot([evt_param['eori'], evt_param['eori']], [0, n_trace+1], color='orange')
+    # display best origin time
+    h6, = axis1.plot([event.preferred_origin().time, event.preferred_origin().time], [0, n_trace+1], color='green', label='Autoloc')
     # display statistics on residuals
     if len(tres_tab) > 1:
-        axis2.text(.01, .03, f"N={len(tres_tab)}: {statistics.mean(tres_tab):.2f} \u00B1"
-                             f" {statistics.stdev(tres_tab):.2f} [s]",
+        axis2.text(.01, .03, f"N={len(tres_tab)}: {np.sqrt(np.mean(np.array(tres_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='orange', transform=axis2.transAxes)
     if len(theo_tab) > 1:
-        axis2.text(.01, .01, f"N={len(theo_tab)}: {statistics.mean(theo_tab):.2f} \u00B1"
-                             f" {statistics.stdev(theo_tab):.2f} [s]",
+        axis2.text(.01, .01, f"N={len(theo_tab)}: {np.sqrt(np.mean(np.array(theo_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='blue', transform=axis2.transAxes)
-    axis2.text(.01, .05, f"N={event[0].preferred_origin().quality.used_phase_count}:"
-                         f" {event[0].preferred_origin().quality.standard_error:.2f} [s]",
+    axis2.text(.01, .05, f"N={event.preferred_origin().quality.used_phase_count}:"
+                         f" {event.preferred_origin().quality.standard_error:.2f} s",
                fontweight='bold', fontsize=8, color='purple', transform=axis2.transAxes)
     # axis limits
     axis1.set_ylim([0, n_trace + 1])
@@ -545,14 +580,14 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     # legend
     if not h4:
         if not h3:
-            axis1.legend(handles=[h1, h2], loc='lower left', fontsize=8)
+            axis1.legend(handles=[h1, h2, h5, h6], loc='lower left', fontsize=8)
         else:
-            axis1.legend(handles=[h1, h2, h3], loc='lower left', fontsize=8)
+            axis1.legend(handles=[h1, h2, h3, h5, h6], loc='lower left', fontsize=8)
     else:
         if not h3:
-            axis1.legend(handles=[h1, h2, h4], loc='lower left', fontsize=8)
+            axis1.legend(handles=[h1, h2, h4, h5, h6], loc='lower left', fontsize=8)
         else:
-            axis1.legend(handles=[h1, h2, h3, h4], loc='lower left', fontsize=8)
+            axis1.legend(handles=[h1, h2, h3, h6, h5, h4], loc='lower left', fontsize=8)
     # station and pick numbers
     axis1.text(-.01, 1.01, f"N={n_trace}", ha='right', va='center', transform=axis1.transAxes)
     # replace numerical tick labels with station names
@@ -603,20 +638,16 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
                        ha='left', va='center', color='red', clip_on=True, fontsize=8)
     # figure title
     tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S')} \u2013 " \
-           f"{event[0].preferred_origin().time.strftime('%d/%m/%Y %H:%M:%S')} " \
-           f"({event[0].preferred_origin().time_errors.uncertainty:.2f} s)"
-    tit2 = f"[{evt_param['elat']:.2f},{evt_param['elon']:.2f}] \u2013 [{event[0].preferred_origin().latitude:.2f}," \
-           f"{event[0].preferred_origin().longitude:.2f}] ([{event[0].preferred_origin().latitude_errors.uncertainty:.2f}," \
-           f"{event[0].preferred_origin().longitude_errors.uncertainty:.2f}] km)"
-    tit3 = f"M{evt_param['emag']:.2f} \u2013 M{event[0].preferred_magnitude().mag:.2f}"
-    tit4 = f"{evt_param['edep']:.2f} \u2013 {event[0].preferred_origin().depth/1000.:.2f} ({event[0].preferred_origin().depth_errors.uncertainty/1000.:.2f} km)"
-    # # figure title
-    # tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S')}" \
-    #        f" \u2013 {evt_param['edep']:.2f} km \u2013 M{evt_param['emag']:3.1f}"
-    # tit2 = f"HP: {filt_param['rmhp']:.2f} [s] \u2013 Taper: {filt_param['taper']:.2f} [s] \u2013 BP: " \
-    #        f"{filt_param['bworder']} / {filt_param['bwminf']:.2f} / {filt_param['bwmaxf']:.2f} [Hz]"
-    # tit3 = f"STA/LTA: {filt_param['sta']:.2f} / {filt_param['lta']:.2f} [s] " \
-    #        f"\u2013 Trigger: {filt_param['trigon']:.2f} / {filt_param['trigoff']:.2f}"
+           f"{event.preferred_origin().time.strftime('%d/%m/%Y %H:%M:%S')} " \
+           f"({event.preferred_origin().time_errors.uncertainty:.2f} s)"
+    tit2 = f"[{evt_param['elat']:.2f},{evt_param['elon']:.2f}] \u2013" \
+           f" [{event.preferred_origin().latitude:.2f}," \
+           f"{event.preferred_origin().longitude:.2f}]" \
+           f" ([{event.preferred_origin().latitude_errors.uncertainty:.2f}," \
+           f"{event.preferred_origin().longitude_errors.uncertainty:.2f}] km)"
+    tit3 = f"M{evt_param['emag']:.2f} \u2013 M{event.preferred_magnitude().mag:.2f}"
+    tit4 = f"{evt_param['edep']:.2f} \u2013 {event.preferred_origin().depth/1000.:.2f}" \
+           f" ({event.preferred_origin().depth_errors.uncertainty/1000.:.2f} km)"
     fig.suptitle(tit1 + '\n' + tit2 + '\n' + tit3 + '\n' + tit4, fontweight='bold')
     # maximise figure
     plt.get_current_fig_manager().full_screen_toggle()
@@ -785,10 +816,10 @@ if if_plot:
 
         ################################################################################################################
         # MORE DATA PROCESSING (FOR PLOTTING ONLY)
-        # remove traces with <2 automatic picks (assuming first pick is for event)
-        for t in isn_traces:
-            if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2 or (not hasattr(t.stats, 'auto_tt')):
-                isn_traces.remove(t)
+        # # remove traces with <2 automatic picks (assuming first pick is for event)
+        # for t in isn_traces:
+        #     if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2 or (not hasattr(t.stats, 'auto_tt')):
+        #         isn_traces.remove(t)
         # apply taper to all traces
         isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['rmhp'], side='left')
         # apply high-pass filter to all traces
@@ -811,4 +842,3 @@ if if_plot:
         isn_traces = None
         print()
         exit()
-    exit()

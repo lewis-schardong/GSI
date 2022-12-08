@@ -1,6 +1,7 @@
 ########################################################################################################################
 import os
 from os import path
+import glob
 import re
 import matplotlib.pyplot as plt
 import matplotlib as mpl
@@ -18,11 +19,12 @@ from obspy.clients.fdsn import Client
 from obspy.taup import TauPyModel
 
 
-def get_traces_deci(evt_id, ori_time, time_win):
+def get_traces_deci(evt_id, ori_time, time_win, sta_inv):
     """
     :param evt_id: event ID
     :param ori_time: event origin time
     :param time_win: half-length of time window
+    :param sta_inv: station inventory
     :return: full path of created miniSEED file
     """
     # define file extension based on time window length
@@ -134,7 +136,11 @@ def get_catalogue_picks(client, evt_id, stream):
     """
     npic = 0
     # retrieve event data
-    event = client.get_events(eventid=evt_id, includearrivals=True)
+    try:
+        event = client.get_events(eventid=evt_id, includearrivals=True)
+    except:
+        print(f'Event ID missing from catalogue: {evt_id}')
+        return stream, 0
     if event:
         event = event[0]
     else:
@@ -154,15 +160,15 @@ def get_catalogue_picks(client, evt_id, stream):
             # initialise pick table if needed
             if not hasattr(trace.stats, 'cata_tt'):
                 trace.stats['cata_tt'] = []
-            trace.stats.cata_tt.append(datetime.strptime(str(pik.time), '%Y-%m-%dT%H:%M:%S.%fZ'))
+            trace.stats.cata_tt.append(pik.time.datetime)
             npic += 1
     return stream, npic
 
 
-def add_event_data(stream, evt_param, ref_mod, sta_inv):
+def add_event_data(stream, event_cata, ref_mod, sta_inv):
     """
     :param stream: data streamer of waveforms to process
-    :param evt_param: dictionary containing event parameters
+    :param event_cata: catalogue event entry
     :param ref_mod: reference velocity model to use for theoretical travel times
     :param sta_inv: .xml inventory containing all station info.
     :return: data streamer with event info.
@@ -203,16 +209,17 @@ def add_event_data(stream, evt_param, ref_mod, sta_inv):
             print(f" Multiple matches in station inventory: {stream[k].stats.station}")
             return None
         # calculate event-station distance
-        dis = gdist.distance((evt_param['elat'], evt_param['elon']), (station[0].stations[0].channels[0].latitude,
-                                                                      station[0].stations[0].channels[0].longitude))
+        dis = gdist.distance((event_cata.preferred_origin().latitude, event_cata.preferred_origin().longitude),
+                             (station[0].stations[0].channels[0].latitude,
+                              station[0].stations[0].channels[0].longitude))
         stream[k].stats.distance = dis.m
         # compute theoretical travel time
-        theo_tt = theory.get_travel_times(source_depth_in_km=evt_param['edep'],
+        theo_tt = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
                                           distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
                                           phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
         # add theoretical travel time to streamer header
         if len(theo_tt) != 0:
-            stream[k].stats['theo_tt'] = evt_param['eori'] + timedelta(seconds=theo_tt[0].time)
+            stream[k].stats['theo_tt'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_tt[0].time)
         else:
             stream[k].stats['theo_tt'] = np.nan
         k += 1
@@ -245,13 +252,12 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     # explosions counter
     n_exp = 0
     for event in evt_lst:
-        # origin time
-        tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
         # normalised x-axis coordinate (because of problems with datetimes and JSON)
-        xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+        xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
         if event.magnitudes:
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
+                     [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
             # display event type & magnitude
             plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
                      color='red', fontsize=10, ha='center', va='bottom',
@@ -259,7 +265,8 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
         else:
             n_exp += 1
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
+                     [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
             # display event type
             plt.text(xpos, 1.03, 'EXP', color='green', fontsize=10, ha='center', va='bottom',
                      clip_on=False, transform=plt.gca().transAxes)
@@ -273,14 +280,13 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
         print(' No M>5 teleseismic events')
     if evt_lst1:
         for event in evt_lst1:
-            # origin time
-            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
-            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
                 continue
             # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
+                     [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
             # display event type & magnitude
             plt.text(xpos, 1.07, f"M{event.preferred_magnitude().mag:3.1f}",
                      color='purple', fontsize=10, ha='center', va='bottom',
@@ -294,14 +300,13 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
         print('No M>3 regional events')
     if evt_lst2:
         for event in evt_lst2:
-            # origin time
-            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
-            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
                 continue
             # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
+                     [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
             # display event type & magnitude
             plt.text(xpos, 1.05, f"M{event.preferred_magnitude().mag:3.1f}",
                      color='orange', fontsize=10, ha='center', va='bottom',
@@ -372,24 +377,25 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     return
 
 
-def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
+def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     """
     :param stream: data streamer of waveforms to process
-    :param evt_param: dictionary containing event parameters
+    :param event_cata: catalogue event entry
     :param fig_name: figure file name (figure is shown if None)
     :return: data streamer with event info.
     """
     # event info. from playback associator
-    event = read_events(f"{wdir}/{oxml.replace('_picks', '_events')}")
-    print(f' {len(event)} event(s) found')
-    if event:
-        if len(event) > 1:
-            tdif = [abs(evt_param['eori']-datetime.strptime(str(e.preferred_origin().time),
-                                                            '%Y-%m-%dT%H:%M:%S.%fZ')).total_seconds() for e in event]
-            event = event[tdif.index(min(tdif))]
+    events = read_events(f"{wdir}/{oxml.replace('_picks', '_events')}")
+    print(f' {len(events)} event(s) found')
+    event_auto = []
+    if events:
+        if len(events) > 1:
+            tdif = [abs(event_cata.preferred_origin().time.datetime -
+                        e.preferred_origin().time.datetime).total_seconds() for e in events]
+            event_auto = events[tdif.index(min(tdif))]
             print(f"  Min. time difference: {min(tdif)} s")
         else:
-            event = event[0]
+            event_auto = events[0]
     # time difference with theory for best autopick
     tlim = 5.
     # plotting mode
@@ -404,7 +410,8 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     # show axis grids
     axis1.grid(which='both', axis='both')
     # set x-axis limits
-    axis1.set_xlim([evt_param['eori'] - twin, evt_param['eori'] + twin])
+    axis1.set_xlim([event_cata.preferred_origin().time.datetime - twin,
+                    event_cata.preferred_origin().time.datetime + twin])
     # set date format to x-axis tick labels
     axis1.xaxis.set_major_formatter(DateFormatter('%H:%M:%S'))
     # AXIS 2: RESIDUAL OVER DISTANCE PLOT
@@ -424,8 +431,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # faults
-    # fid = open('/home/lewis/.seiscomp/bna/ActiveFaults/activefaults.bna', 'r')
-    fid = open('/home/sysop/.seiscomp/bna/ActiveFaults/activefaults.bna', 'r')
+    fid = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/ActiveFaults/activefaults.bna", 'r')
     flts = fid.readlines()
     fid.close()
     flt = []
@@ -439,8 +445,8 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             l_line = flts[iii].split(',')
             flt.loc[flt.shape[0]] = [float(l_line[1]), float(l_line[0])]
     # quarries
-    # fid = open('/home/lewis/.seiscomp/bna/Quarries/quarries.bna', 'r')
-    fid = open('/home/sysop/.seiscomp/bna/Quarries/quarries.bna', 'r')
+    fid = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/Quarries/quarries.bna", 'r')
+    # fid = open('/home/sysop/.seiscomp/bna/Quarries/quarries.bna', 'r')
     flts = fid.readlines()
     fid.close()
     hq = []
@@ -468,7 +474,6 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     h5 = []
     # initialise tables for map legend
     hm1 = []
-    hm2 = []
     # initialise list of station labels
     stn_lbl = []
     for trace in stream:
@@ -505,15 +510,16 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             for pick in trace.stats.auto_tt:
                 pid = f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}"
                 fnd = False
-                for a in event.preferred_origin().arrivals:
-                    if re.search(pid, str(a.pick_id)):
-                        rid = str(a.resource_id).replace(f"_{str(event.preferred_origin().resource_id).replace('smi:org.gfz-potsdam.de/geofon/', '')}", '')
-                        for p in event.picks:
-                            if rid == p.resource_id and pick == datetime.strptime(str(p.time), '%Y-%m-%dT%H:%M:%S.%fZ'):
-                                fnd = True
+                if events:
+                    for a in event_auto.preferred_origin().arrivals:
+                        if re.search(pid, str(a.pick_id)):
+                            rid = str(a.resource_id).replace(f"_{str(event_auto.preferred_origin().resource_id).replace('smi:org.gfz-potsdam.de/geofon/', '')}", '')
+                            for p in event_auto.picks:
+                                if rid == p.resource_id and pick == p.time.datetime:
+                                    fnd = True
+                                    break
+                            if fnd:
                                 break
-                        if fnd:
-                            break
                 if fnd:
                     # show picks used in location
                     h4, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='red', label='Auto. arrivals')
@@ -530,7 +536,8 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
                 axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
                            'o', markersize=7, color='purple', mfc='none', alpha=.7)
                 # find pick >OT and <[tlim]s difference with theoretical arrival
-                if pick > evt_param['eori'] and n_pic == tdif.index(min(tdif)) and tdif[n_pic] < tlim:
+                if pick > event_cata.preferred_origin().time.datetime and \
+                        n_pic == tdif.index(min(tdif)) and tdif[n_pic] < tlim:
                     k_apic = n_pic
                 # counter
                 n_pic += 1
@@ -561,33 +568,45 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
             axis2.plot((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds(), n_trace,
                        'o', markersize=5, mfc='blue', mec='none', alpha=.7)
     # display catalogue origin time
-    axis1.plot([evt_param['eori'], evt_param['eori']], [0, n_trace+1], color='orange')
-    # display best origin time
-    h6, = axis1.plot([event.preferred_origin().time, event.preferred_origin().time], [0, n_trace+1], color='green', label='Autoloc')
-    # display statistics on residuals
+    axis1.plot([event_cata.preferred_origin().time.datetime, event_cata.preferred_origin().time.datetime],
+               [0, n_trace+1], color='orange')
+    # display catalogue residuals RMS
     if len(tres_tab) > 1:
         axis2.text(.01, .03, f"N={len(tres_tab)}: {np.sqrt(np.mean(np.array(tres_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='orange', transform=axis2.transAxes)
+    # display theoretical residuals RMS
     if len(theo_tab) > 1:
         axis2.text(.01, .01, f"N={len(theo_tab)}: {np.sqrt(np.mean(np.array(theo_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='blue', transform=axis2.transAxes)
-    axis2.text(.01, .05, f"N={event.preferred_origin().quality.used_phase_count}:"
-                         f" {event.preferred_origin().quality.standard_error:.2f} s",
-               fontweight='bold', fontsize=8, color='purple', transform=axis2.transAxes)
+    h6 = []
+    if events:
+        # display autoloc origin times
+        for e in events:
+            h6, = axis1.plot([e.preferred_origin().time.datetime,
+                              e.preferred_origin().time.datetime], [0, n_trace+1],
+                             color='green', label='Autoloc')
+        # display autoloc residuals RMS
+        axis2.text(.01, .05, f"N={event_auto.preferred_origin().quality.used_phase_count}:"
+                             f" {event_auto.preferred_origin().quality.standard_error:.2f} s",
+                   fontweight='bold', fontsize=8, color='purple', transform=axis2.transAxes)
     # axis limits
     axis1.set_ylim([0, n_trace + 1])
     axis2.set_ylim([0, n_trace + 1])
     # legend
     if not h4:
         if not h3:
-            axis1.legend(handles=[h1, h2, h5, h6], loc='lower left', fontsize=8)
+            hh = [h1, h2, h5]
         else:
-            axis1.legend(handles=[h1, h2, h3, h5, h6], loc='lower left', fontsize=8)
+            hh = [h1, h2, h3, h5]
     else:
         if not h3:
-            axis1.legend(handles=[h1, h2, h4, h5, h6], loc='lower left', fontsize=8)
+            hh = [h1, h2, h4, h5]
         else:
-            axis1.legend(handles=[h1, h2, h3, h6, h5, h4], loc='lower left', fontsize=8)
+            if events:
+                hh = [h1, h2, h3, h6, h5, h4]
+            else:
+                hh = [h1, h2, h3, h5, h4]
+    axis1.legend(handles=hh, loc='lower left', fontsize=8)
     # station and pick numbers
     axis1.text(-.01, 1.01, f"N={n_trace}", ha='right', va='center', transform=axis1.transAxes)
     # replace numerical tick labels with station names
@@ -595,7 +614,7 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     axis1.set_yticklabels(stn_lbl, fontsize=5)
     axis2.set_yticklabels([])
     # axis labels
-    axis1.set_xlabel('Time - OT [s]', fontweight='bold')
+    axis1.set_xlabel('Time [s]', fontweight='bold')
     axis1.set_ylabel('Station', fontweight='bold')
     axis2.set_xlabel('\u0394t [s]', fontweight='bold')
     # MAP
@@ -604,16 +623,30 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
         for st in nt.stations:
             if not stream.select(network=nt.code, station=st.code):
                 axis3.plot(st.longitude, st.latitude, 'x', markersize=7, color='black', mfc='none', alpha=.7)
-    # plot event location
-    he, = axis3.plot(evt_param['elon'], evt_param['elat'], '*',
-                     color='orange', markersize=10, markeredgecolor='black', label='Event')
+    # plot catalogue event location
+    hc, = axis3.plot(event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude, '*',
+                     color='orange', markersize=10, markeredgecolor='black', label='Catalogue', alpha=.7)
+    ell_unc = mpl.patches.Ellipse((event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude),
+                                  width=event_cata.preferred_origin().longitude_errors.uncertainty,
+                                  height=event_cata.preferred_origin().latitude_errors.uncertainty,
+                                  color='orange', alpha=.1)
+    axis3.add_patch(ell_unc)
+    ha = []
+    if events:
+        # plot autoloc events location
+        for e in events:
+            ha, = axis3.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
+                             color='green', markersize=10, markeredgecolor='black', label='Autoloc', alpha=.7)
+            ell_unc = mpl.patches.Ellipse((e.preferred_origin().longitude, e.preferred_origin().latitude),
+                                          width=e.preferred_origin().longitude_errors.uncertainty/(2.*np.pi*rrad/360.),
+                                          height=e.preferred_origin().latitude_errors.uncertainty /
+                                          (2.*np.pi*rrad/360.), color='green', alpha=.1)
+        axis3.add_patch(ell_unc)
     # map legend
-    if not hm1:
-        hm = [hm2, he, hf, hq]
-    elif not hm2:
-        hm = [hm1, he, hf, hq]
+    if events:
+        hm = [hm1, hc, ha, hf, hq]
     else:
-        hm = [hm1, hm2, he, hf, hq]
+        hm = [hm1, hc, hf, hq]
     axis3.legend(handles=hm, loc='upper left', fontsize=8)
     # AXIS 4: INSET MAP FOR REGIONAL SETTINGS
     axis4 = inset_axes(axis3, '30%', '18%', loc='lower left')
@@ -626,29 +659,37 @@ def plot_autopick_evt_sec(stream, evt_param, fig_name=None):
     # highlight area of interest
     axis4.plot([mgrd[2] + .5, mgrd[2] + .5, mgrd[3] - .5, mgrd[3] - .5, mgrd[2] + .5],
                [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], color='red')
-    # plot event location
-    axis4.plot(evt_param['elon'], evt_param['elat'], '*', color='red', markersize=10, markeredgecolor='black')
-    # display magnitude if exists
-    if evt_param['emag'] and not np.isnan(evt_param['emag']):
-        if evt_param['elon'] < mgrd[2]+(mgrd[3]-mgrd[2])/2.:
-            axis4.text(evt_param['elon']-2., evt_param['elat'], f"M{evt_param['emag']:3.1f}",
-                       ha='right', va='center', color='red', clip_on=True, fontsize=8)
-        else:
-            axis4.text(evt_param['elon']+2., evt_param['elat'], f"M{evt_param['emag']:3.1f}",
-                       ha='left', va='center', color='red', clip_on=True, fontsize=8)
-    # figure title
-    tit1 = f"{evt_param['eori'].strftime('%d/%m/%Y %H:%M:%S')} \u2013 " \
-           f"{event.preferred_origin().time.strftime('%d/%m/%Y %H:%M:%S')} " \
-           f"({event.preferred_origin().time_errors.uncertainty:.2f} s)"
-    tit2 = f"[{evt_param['elat']:.2f},{evt_param['elon']:.2f}] \u2013" \
-           f" [{event.preferred_origin().latitude:.2f}," \
-           f"{event.preferred_origin().longitude:.2f}]" \
-           f" ([{event.preferred_origin().latitude_errors.uncertainty:.2f}," \
-           f"{event.preferred_origin().longitude_errors.uncertainty:.2f}] km)"
-    tit3 = f"M{evt_param['emag']:.2f} \u2013 M{event.preferred_magnitude().mag:.2f}"
-    tit4 = f"{evt_param['edep']:.2f} \u2013 {event.preferred_origin().depth/1000.:.2f}" \
-           f" ({event.preferred_origin().depth_errors.uncertainty/1000.:.2f} km)"
-    fig.suptitle(tit1 + '\n' + tit2 + '\n' + tit3 + '\n' + tit4, fontweight='bold')
+    # EVENTS
+    # plot catalogue event location
+    axis4.plot(event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude, '*',
+               color='orange', markersize=10, markeredgecolor='black', alpha=.7)
+    # display catalogue magnitude
+    if event_cata.preferred_magnitude().mag and not np.isnan(event_cata.preferred_magnitude().mag):
+        axis4.text(event_cata.preferred_origin().longitude-2., event_cata.preferred_origin().latitude,
+                   f"M{event_cata.preferred_magnitude().mag:3.1f}",
+                   ha='right', va='center', color='orange', clip_on=True, fontsize=8)
+    if events:
+        # plot autoloc event locations and magnitudes
+        for e in events:
+            axis4.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
+                       color='green', markersize=10, markeredgecolor='black', alpha=.7)
+            if e.preferred_magnitude() and e.preferred_magnitude().mag:
+                axis4.text(e.preferred_origin().longitude+2., e.preferred_origin().latitude,
+                           f"M{e.preferred_magnitude().mag:3.1f}",
+                           ha='left', va='center', color='green', clip_on=True, fontsize=8)
+        # figure title
+        tit1 = f"{datetime.strftime(event_cata.preferred_origin().time.datetime, '%d/%m/%Y %H:%M:%S')} \u2013 " \
+               f"{datetime.strftime(event_auto.preferred_origin().time.datetime, '%d/%m/%Y %H:%M:%S')} " \
+               f"({event_auto.preferred_origin().time_errors.uncertainty:.2f} s)"
+        tit2 = f"[{event_cata.preferred_origin().latitude:.2f},{event_cata.preferred_origin().longitude:.2f}] \u2013" \
+               f" [{event_auto.preferred_origin().latitude:.2f},{event_auto.preferred_origin().longitude:.2f}]" \
+               f" ([{event_auto.preferred_origin().latitude_errors.uncertainty:.2f}," \
+               f"{event_auto.preferred_origin().longitude_errors.uncertainty:.2f}] km)"
+        tit3 = f"M{event_cata.preferred_magnitude().mag:.2f} \u2013 M{event_auto.preferred_magnitude().mag:.2f}"
+        tit4 = f"{event_cata.preferred_origin().depth/1000.:.2f} \u2013" \
+               f" {event_auto.preferred_origin().depth/1000.:.2f}" \
+               f" ({event_auto.preferred_origin().depth_errors.uncertainty/1000.:.2f} km)"
+        fig.suptitle(tit1 + '\n' + tit2 + '\n' + tit3 + '\n' + tit4, fontweight='bold')
     # maximise figure
     plt.get_current_fig_manager().full_screen_toggle()
     # adjust plots
@@ -680,8 +721,10 @@ rgrd = [23., 43., 25., 45.]
 vel_mod = 'giimod'
 
 # working directory
-# wdir = f'/home/lewis/autopicker-pb'
-wdir = f'/mnt/c/Users/lewiss/Documents/Research/Autopicker/autopicker-pb'
+if os.environ['LOGNAME'] == 'sysop':
+    wdir = '/mnt/c/Users/lewiss/Documents/Research/Autopicker/autopicker-pb'
+else:
+    wdir = '/home/lewis/autopicker-pb'
 print(f'Working directory: {wdir}\n')
 mpl.rcParams['savefig.directory'] = f"{wdir}"
 # data archive directory
@@ -709,7 +752,7 @@ etab = pd.read_csv(f"{wdir}/01-06-2021_01-06-2022_M3.csv", parse_dates=['OriginT
 twin = timedelta(minutes=5)
 
 ########################################################################################################################
-# FILE PROCESSING TO BUILD FIGURES
+# DATA PROCESSING
 if_proc = False
 if if_proc:
     # loop over events
@@ -719,16 +762,14 @@ if if_proc:
                                                   '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
         if evt == '20210617215634852' or evt == '20211027045305932':
             continue
-        epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
-                'eori': datetime.strptime(str(erow.OriginTime).replace('+00:00', ''),
-                                          '%Y-%m-%d %H:%M:%S.%f'), 'emag': erow.Magnitude}
-        print(f"{evt} M{epar['emag']:3.1f}")
+        evt_cata = isn_client.get_events(eventid=erow.EventID)[0]
+        print(f"{evt} M{evt_cata.preferred_magnitude().mag:3.1f}")
 
         ################################################################################################################
         # RETRIEVE WAVEFORM DATA
         if path.exists(f"{wdir}/{evt}.mseed") == 0:
             # .mseed file name
-            mfile = get_traces_deci(evt, epar['eori'], twin)
+            mfile = get_traces_deci(evt, evt_cata.preferred_origin().time.datetime, twin)
             # read .mseed file
             isn_traces = read(mfile).merge()
             # remove trend from all traces
@@ -749,14 +790,16 @@ if if_proc:
         if path.exists(f"{wdir}/{oxml.replace('picks', 'events')}") != 0:
             print(f" Playback already ran for {evt}:")
             os.system(f"ls -lh {wdir}/{oxml.replace('picks', 'events')}")
+            continue
         else:
             # autopicker command (using raw .mseed file)
             print(f" Running playback for {evt}")
             os.system(f'{wdir}/playback.sh {evt}')
         print()
+        break
 
 ########################################################################################################################
-# FIGURES
+# FIGURE BUILDING
 if_plot = True
 if if_plot:
     # loop over events
@@ -766,11 +809,9 @@ if if_plot:
                                                   '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
         if evt == '20210617215634852' or evt == '20211027045305932':
             continue
-        epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
-                'eori': datetime.strptime(str(erow.OriginTime).replace('+00:00', ''),
-                                          '%Y-%m-%d %H:%M:%S.%f'), 'emag': erow.Magnitude}
-        print(f"{evt} M{epar['emag']:3.1f}")
-        # check whether figure and output file already exist or not
+        evt_cata = isn_client.get_events(eventid=erow.EventID)[0]
+        print(f"{evt} M{evt_cata.preferred_magnitude().mag:3.1f}")
+        # check whether figure already exists or not
         oxml = f"{evt}_picks.xml"
         if path.exists(f"{wdir}/{oxml.replace('_picks.xml', '.png')}") != 0:
             print()
@@ -781,9 +822,14 @@ if if_plot:
         # load waveform data to plot (not .raw.mseed)
         isn_traces = read(f"{wdir}/{evt}.mseed")
         # add event data to waveforms
-        isn_traces = add_event_data(isn_traces, epar, vel_mod, isn_inv)
+        isn_traces = add_event_data(isn_traces, evt_cata, vel_mod, isn_inv)
         # sort according to newly added distance to event
         isn_traces.sort(['distance'], reverse=True)
+        # check if playback was ran
+        if path.exists(f"{wdir}/{oxml}") == 0:
+            print(f' Playback not ran for {evt}')
+            print()
+            continue
         # read output file
         isn_traces, na = read_autopick_xml(f"{wdir}/{oxml}", isn_traces, 'P')
         if na < 2:
@@ -803,7 +849,8 @@ if if_plot:
         # # initialise table to contain 30-s time windows with >6 picks
         # wtab = []
         # # look for 30-s time windows with >6 picks
-        # tper = pd.date_range(epar['eori']-twin, epar['eori']+twin, freq='30S').to_list()
+        # tper = pd.date_range(evt_cata.preferred_origin().time.datetime-twin,
+        #                      evt_cata.preferred_origin().time.datetime+twin, freq='30S').to_list()
         # for i in range(len(tper)-1):
         #     tab = atab.loc[(atab.pick > tper[i]) & (atab.pick <= tper[i+1])]
         #     if not tab.empty and len(tab) > 5:
@@ -811,7 +858,8 @@ if if_plot:
 
         ################################################################################################################
         # RETRIEVE CATALOGUE PICKS
-        isn_traces, nc = get_catalogue_picks(isn_client, epar['evid'], isn_traces)
+        isn_traces, nc = get_catalogue_picks(isn_client, str(evt_cata.resource_id.id).
+                                             replace('smi:org.gfz-potsdam.de/geofon/', ''), isn_traces)
         print(f" {nc} catalogue picks")
 
         ################################################################################################################
@@ -820,6 +868,26 @@ if if_plot:
         # for t in isn_traces:
         #     if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2 or (not hasattr(t.stats, 'auto_tt')):
         #         isn_traces.remove(t)
+        # removing all Meiron stations apart from MMA0B
+        for tr in isn_traces:
+            if re.search('MMA', tr.stats.station) or re.search('MMB', tr.stats.station) or \
+                    re.search('MMC', tr.stats.station):
+                isn_traces.remove(tr)
+        # check bindings to see what other stations and/or channels to remove
+        flst = glob.glob('/home/sysop/seiscomp/etc/key/station_IS_*')
+        for file in flst:
+            if os.path.getsize(file) == 0:
+                to_del = isn_traces.select(network=file.split('_')[1], station=file.split('_')[2])
+                for wf in to_del:
+                    isn_traces.remove(wf)
+            else:
+                fid = open(file, 'r')
+                lines = fid.readlines()
+                fid.close()
+                wf_sel = isn_traces.select(network=file.split('_')[1], station=file.split('_')[2])
+                for wf in wf_sel:
+                    if wf.stats.channel != lines[1].split(':')[1].replace('\n', '').split('_')[1]+'Z':
+                        isn_traces.remove(wf)
         # apply taper to all traces
         isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['rmhp'], side='left')
         # apply high-pass filter to all traces
@@ -833,12 +901,11 @@ if if_plot:
         # BUILD OUTPUT FIGURE
         # # add event origin time to trace headers
         # for tr in isn_traces:
-        #     tr.stats['origin_time'] = epar['eori']
+        #     tr.stats['origin_time'] = evt_cata.preferred_origin().time.datetime
         # only if figure does not already exist
         if path.exists(f"{wdir}/{oxml.replace('_picks.xml', '.png')}") == 0:
             print(f' {len(isn_traces)} waveforms to plot')
             # plot_autopick_cont_sec(isn_traces, wtab, f"{wdir}/{oxml.replace('_picks.xml', '.html')}")
-            plot_autopick_evt_sec(isn_traces, epar, f"{wdir}/{oxml.replace('_picks.xml', '.png')}")
+            plot_autopick_evt_sec(isn_traces, evt_cata, f"{wdir}/{oxml.replace('_picks.xml', '.png')}")
         isn_traces = None
         print()
-        exit()

@@ -33,7 +33,7 @@ m1.drawmapboundary(fill_color='none')
 m1.fillcontinents(color='0.8', lake_color='white')
 # show grid
 # project lat/lon coordinates
-gtab.x, gtab.y = m1(gtab.lon, gtab.lat)
+gtab['x'], gtab['y'] = m1(gtab.lon, gtab.lat)
 h5, = axis1.plot(gtab.x[gtab.dep == 600.], gtab.y[gtab.dep == 600.], 'o', mec='purple', mfc='none', markersize=4, linewidth=.001, label='600 km', alpha=.7)
 h4, = axis1.plot(gtab.x[gtab.dep == 450.], gtab.y[gtab.dep == 450.], 'o', mec='blue', mfc='none', markersize=2, linewidth=.001, label='450 km', alpha=.7)
 h3, = axis1.plot(gtab.x[gtab.dep == 300.], gtab.y[gtab.dep == 300.], 'o', mec='green', mfc='none', markersize=1, linewidth=.001, label='300 km', alpha=.7)

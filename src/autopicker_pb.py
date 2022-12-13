@@ -19,12 +19,11 @@ from obspy.clients.fdsn import Client
 from obspy.taup import TauPyModel
 
 
-def get_traces_deci(evt_id, ori_time, time_win, sta_inv):
+def get_traces_deci(evt_id, ori_time, time_win):
     """
     :param evt_id: event ID
     :param ori_time: event origin time
     :param time_win: half-length of time window
-    :param sta_inv: station inventory
     :return: full path of created miniSEED file
     """
     # define file extension based on time window length
@@ -52,39 +51,6 @@ def get_traces_deci(evt_id, ori_time, time_win, sta_inv):
             os.remove(mseed)
             mseed = ''
     return mseed
-
-
-def process_mseed(mseed_in, sta_inv):
-    """
-    :param mseed_in: full path to miniSEED file to process
-    :param sta_inv: station inventory
-    :return: data streamer with event info.
-    """
-    # read raw miniSEED file
-    stream = read(mseed_in).merge()
-    mseed_out = mseed_in.replace('.raw', '')
-    if path.exists(mseed_out) != 0:
-        print(f' Waveform data already processed: {mseed_out}')
-        return mseed_out
-    # remove response from all traces
-    try:
-        stream.remove_response(output='VEL', inventory=sta_inv)
-    except:
-        for trace in stream:
-            print(f'{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}')
-            trace.remove_response(output='VEL', inventory=sta_inv)
-            exit()
-    # apply taper to all traces
-    stream.taper(max_percentage=.5, type='cosine', max_length=10., side='left')
-    # apply high-pass filter to all traces
-    stream.filter('highpass', freq=1./5.)
-    # remove trend from all traces
-    stream.detrend('spline', order=3, dspline=500)
-    # apply Butterworth band-pass filter to all traces
-    stream.filter('bandpass', freqmin=4., freqmax=8., corners=4)
-    # write miniSEED file
-    stream.write(mseed_out)
-    return mseed_out
 
 
 def read_autopick_xml(xml_path, stream, phase='P'):
@@ -127,6 +93,36 @@ def read_autopick_xml(xml_path, stream, phase='P'):
     return stream, npic
 
 
+def get_automatic_picks(xml_path, stream):
+    # initialise counter
+    n_pick = 0
+    # read pick file
+    event = read_events(xml_path)[0]
+    for pick in event.picks:
+        if pick.waveform_id.location_code is None:
+            pick_loc = ''
+        else:
+            pick_loc = pick.waveform_id.location_code
+        trace = stream.select(network=pick.waveform_id.network_code, station=pick.waveform_id.station_code,
+                              location=pick_loc, channel=pick.waveform_id.channel_code)
+        if not trace:
+            continue
+        else:
+            trace = trace[0]
+        if pick.phase_hint[0] == 'P':
+            # initialise pick table if needed
+            if not hasattr(trace.stats, 'auto_ttp'):
+                trace.stats['auto_ttp'] = []
+            trace.stats.auto_ttp.append(pick.time.datetime)
+        elif pick.phase_hint[0] == 'S':
+            # initialise pick table if needed
+            if not hasattr(trace.stats, 'auto_tts'):
+                trace.stats['auto_tts'] = []
+            trace.stats.auto_tts.append(pick.time.datetime)
+        n_pick += 1
+    return stream, n_pick
+
+
 def get_catalogue_picks(client, evt_id, stream):
     """
     :param client: Obspy FDSN client to retrieve data from
@@ -134,7 +130,7 @@ def get_catalogue_picks(client, evt_id, stream):
     :param stream: data streamer of waveforms to process
     :return: data streamer containing catalogue picks in trace headers and total number of picks found
     """
-    npic = 0
+    n_pick = 0
     # retrieve event data
     try:
         event = client.get_events(eventid=evt_id, includearrivals=True)
@@ -145,24 +141,29 @@ def get_catalogue_picks(client, evt_id, stream):
         event = event[0]
     else:
         return stream, 0
-    for pik in event.picks:
-        if pik.phase_hint[0] == 'P':
-            if pik.waveform_id.location_code is None:
-                pik_loc = ''
-            else:
-                pik_loc = pik.waveform_id.location_code
-            trace = stream.select(network=pik.waveform_id.network_code, station=pik.waveform_id.station_code,
-                                  location=pik_loc, channel=pik.waveform_id.channel_code)
-            if not trace:
-                continue
-            else:
-                trace = trace[0]
+    for pick in event.picks:
+        if pick.waveform_id.location_code is None:
+            pick_loc = ''
+        else:
+            pick_loc = pick.waveform_id.location_code
+        trace = stream.select(network=pick.waveform_id.network_code, station=pick.waveform_id.station_code,
+                              location=pick_loc, channel=pick.waveform_id.channel_code)
+        if not trace:
+            continue
+        else:
+            trace = trace[0]
+        if pick.phase_hint[0] == 'P':
             # initialise pick table if needed
-            if not hasattr(trace.stats, 'cata_tt'):
-                trace.stats['cata_tt'] = []
-            trace.stats.cata_tt.append(pik.time.datetime)
-            npic += 1
-    return stream, npic
+            if not hasattr(trace.stats, 'cata_ttp'):
+                trace.stats['cata_ttp'] = []
+            trace.stats.cata_ttp.append(pick.time.datetime)
+        elif pick.phase_hint[0] == 'S':
+            # initialise pick table if needed
+            if not hasattr(trace.stats, 'cata_tts'):
+                trace.stats['cata_tts'] = []
+            trace.stats.cata_tts.append(pick.time.datetime)
+        n_pick += 1
+    return stream, n_pick
 
 
 def add_event_data(stream, event_cata, ref_mod, sta_inv):
@@ -214,14 +215,24 @@ def add_event_data(stream, event_cata, ref_mod, sta_inv):
                               station[0].stations[0].channels[0].longitude))
         stream[k].stats.distance = dis.m
         # compute theoretical travel time
-        theo_tt = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
-                                          distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
-                                          phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
-        # add theoretical travel time to streamer header
-        if len(theo_tt) != 0:
-            stream[k].stats['theo_tt'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_tt[0].time)
-        else:
-            stream[k].stats['theo_tt'] = np.nan
+        if hasattr(stream[k].stats, 'auto_ttp'):
+            theo_ttp = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
+                                               distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
+                                               phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
+            # add theoretical travel time to streamer header
+            if len(theo_ttp) != 0:
+                stream[k].stats['theo_ttp'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_ttp[0].time)
+            else:
+                stream[k].stats['theo_ttp'] = np.nan
+        if hasattr(stream[k].stats, 'auto_tts'):
+            theo_tts = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
+                                               distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
+                                               phase_list=['s', 'S', 'Sg', 'Sn', 'Sdiff'])
+            # add theoretical travel time to streamer header
+            if len(theo_tts) != 0:
+                stream[k].stats['theo_tts'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_tts[0].time)
+            else:
+                stream[k].stats['theo_tts'] = np.nan
         k += 1
     # delete selected waveforms
     for trace in to_del:
@@ -330,10 +341,12 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     n_trace = 0
     # loop over stream channels
     for trace in stream:
+        # counter
         n_trace += 1
-        # plot waveforms
+        # build time vector
         t_vec = np.arange(0, len(trace)) * np.timedelta64(int(trace.stats.delta * 1000), '[ms]')\
             + np.datetime64(str(trace.stats.starttime)[:-1])
+        # plot waveform
         plt.plot(t_vec, trace.data/trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
         if hasattr(trace.stats, 'auto_tt'):
             # number of picks per station
@@ -369,11 +382,11 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     # set x-axis font size
     plt.gca().tick_params(axis='x', which='major', labelsize=10)
     # save figure
-    fid = open(fig_name, 'w')
-    mpld3.save_html(fig, fid)
+    file_id = open(fig_name, 'w')
+    mpld3.save_html(fig, file_id)
     print(f" Figure saved: {fig_name}")
     plt.close()
-    fid.close()
+    file_id.close()
     return
 
 
@@ -431,9 +444,9 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # faults
-    fid = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/ActiveFaults/activefaults.bna", 'r')
-    flts = fid.readlines()
-    fid.close()
+    file_id = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/ActiveFaults/activefaults.bna", 'r')
+    flts = file_id.readlines()
+    file_id.close()
     flt = []
     hf = []
     for iii in range(len(flts)):
@@ -445,10 +458,10 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
             l_line = flts[iii].split(',')
             flt.loc[flt.shape[0]] = [float(l_line[1]), float(l_line[0])]
     # quarries
-    fid = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/Quarries/quarries.bna", 'r')
+    file_id = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/Quarries/quarries.bna", 'r')
     # fid = open('/home/sysop/.seiscomp/bna/Quarries/quarries.bna', 'r')
-    flts = fid.readlines()
-    fid.close()
+    flts = file_id.readlines()
+    file_id.close()
     hq = []
     for iii in range(len(flts)):
         if re.search('"', flts[iii]):
@@ -486,9 +499,13 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
             + np.datetime64(str(trace.stats.starttime)[:-1])
         # plot waveform
         h1, = axis1.plot(t_vec, trace.data / trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
-        # plot theoretical travel time
-        if hasattr(trace.stats, 'theo_tt') and trace.stats.theo_tt:
-            h2, = axis1.plot([trace.stats.theo_tt, trace.stats.theo_tt], [n_trace - 1, n_trace + 1],
+        # plot theoretical P travel times
+        if hasattr(trace.stats, 'theo_ttp') and trace.stats.theo_ttp:
+            h2, = axis1.plot([trace.stats.theo_ttp, trace.stats.theo_ttp], [n_trace - 1, n_trace + 1],
+                             color='blue', linestyle='dotted', label=vel_mod)
+        # plot theoretical S travel times
+        if hasattr(trace.stats, 'theo_tts') and trace.stats.theo_tts:
+            axis1.plot([trace.stats.theo_tts, trace.stats.theo_tts], [n_trace - 1, n_trace + 1],
                              color='blue', linestyle='dotted', label=vel_mod)
         # plot station in map
         st = isn_inv.select(network=trace.stats.network, station=trace.stats.station, channel=trace.stats.channel)
@@ -500,7 +517,7 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
         # AUTOMATIC PICKS
         # initialise index for pick of interest
         k_apic = None
-        # make sure station has picks
+        # make sure station has automatic picks
         if hasattr(trace.stats, 'auto_tt') and trace.stats.auto_tt:
             # time difference between automatic picks and theoretical arrival
             tdif = [abs((xx - trace.stats.theo_tt).total_seconds()) for xx in trace.stats.auto_tt]
@@ -513,7 +530,9 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
                 if events:
                     for a in event_auto.preferred_origin().arrivals:
                         if re.search(pid, str(a.pick_id)):
-                            rid = str(a.resource_id).replace(f"_{str(event_auto.preferred_origin().resource_id).replace('smi:org.gfz-potsdam.de/geofon/', '')}", '')
+                            xid = str(event_auto.preferred_origin().resource_id)\
+                                .replace('smi:org.gfz-potsdam.de/geofon/', '')
+                            rid = str(a.resource_id).replace(f"_{xid}", '')
                             for p in event_auto.picks:
                                 if rid == p.resource_id and pick == p.time.datetime:
                                     fnd = True
@@ -685,7 +704,13 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
                f" [{event_auto.preferred_origin().latitude:.2f},{event_auto.preferred_origin().longitude:.2f}]" \
                f" ([{event_auto.preferred_origin().latitude_errors.uncertainty:.2f}," \
                f"{event_auto.preferred_origin().longitude_errors.uncertainty:.2f}] km)"
-        tit3 = f"M{event_cata.preferred_magnitude().mag:.2f} \u2013 M{event_auto.preferred_magnitude().mag:.2f}"
+        cmag = np.nan
+        if event_cata.preferred_magnitude() and event_cata.preferred_magnitude().mag:
+            cmag = event_cata.preferred_magnitude().mag
+        amag = np.nan
+        if event_auto.preferred_magnitude() and event_auto.preferred_magnitude().mag:
+            amag = event_auto.preferred_magnitude().mag
+        tit3 = f"M{cmag:.2f} \u2013 M{amag:.2f}"
         tit4 = f"{event_cata.preferred_origin().depth/1000.:.2f} \u2013" \
                f" {event_auto.preferred_origin().depth/1000.:.2f}" \
                f" ({event_auto.preferred_origin().depth_errors.uncertainty/1000.:.2f} km)"
@@ -708,9 +733,9 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
 ########################################################################################################################
 # input parameters
 ntw = 'IS'
-chn = '(B|H|E)(H|N)Z'
+chn = '(B|H|E)(H|N)(Z|N|E)'
 pic = 'AIC'
-fpar = {'rmhp': 10., 'taper': 30., 'bworder': 4, 'bwminf': 4., 'bwmaxf': 8.,
+fpar = {'rmhp': 5., 'taper': 10., 'bworder': 4, 'bwminf': 4., 'bwmaxf': 8.,
         'sta': .2, 'lta': 10., 'trigon': 3., 'trigoff': 1.5}
 
 # area of interest
@@ -751,6 +776,21 @@ etab = pd.read_csv(f"{wdir}/01-06-2021_01-06-2022_M3.csv", parse_dates=['OriginT
 # event experiments
 twin = timedelta(minutes=5)
 
+evt = '20210615230854375'
+oxml = f'{evt}_events.xml'
+get_automatic_picks(f"{wdir}/{oxml}", twin)
+# isn_traces = read(f"{wdir}/{oxml.replace('_picks.xml', '.mseed')}")
+# isn_traces, na = read_autopick_xml(f"{wdir}/{oxml}", isn_traces)
+# print(f'{na} automatic picks')
+# for tr in isn_traces:
+#     print(tr.stats)
+#     exit()
+#     print(f"{tr.stats.network}.{tr.stats.station}.{tr.stats.location}.{tr.stats.channel}")
+#     if hasattr(tr.stats, 'auto_ttp'):
+#         print(f"P: {len(tr.stats.auto_ttp)}")
+#     if hasattr(tr.stats, 'auto_tts'):
+#         print(f"S: {len(tr.stats.auto_tts)}")
+
 ########################################################################################################################
 # DATA PROCESSING
 if_proc = False
@@ -790,13 +830,14 @@ if if_proc:
         if path.exists(f"{wdir}/{oxml.replace('picks', 'events')}") != 0:
             print(f" Playback already ran for {evt}:")
             os.system(f"ls -lh {wdir}/{oxml.replace('picks', 'events')}")
+            print()
             continue
         else:
             # autopicker command (using raw .mseed file)
             print(f" Running playback for {evt}")
             os.system(f'{wdir}/playback.sh {evt}')
         print()
-        break
+        exit()
 
 ########################################################################################################################
 # FIGURE BUILDING
@@ -877,8 +918,8 @@ if if_plot:
         flst = glob.glob('/home/sysop/seiscomp/etc/key/station_IS_*')
         for file in flst:
             if os.path.getsize(file) == 0:
-                to_del = isn_traces.select(network=file.split('_')[1], station=file.split('_')[2])
-                for wf in to_del:
+                wf_sel = isn_traces.select(network=file.split('_')[1], station=file.split('_')[2])
+                for wf in wf_sel:
                     isn_traces.remove(wf)
             else:
                 fid = open(file, 'r')
@@ -909,3 +950,4 @@ if if_plot:
             plot_autopick_evt_sec(isn_traces, evt_cata, f"{wdir}/{oxml.replace('_picks.xml', '.png')}")
         isn_traces = None
         print()
+        exit()

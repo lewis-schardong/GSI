@@ -27,43 +27,59 @@ if not fig_name:
 # GLOBAL
 # define map projection & resolution
 m1 = Basemap(projection='eck4', lon_0=0, resolution='l', ax=axis1)
+# fill continents
+m1.fillcontinents(color='.8', lake_color='white')
 # draw map
 m1.drawmapboundary(fill_color='none')
-# fill continents
-m1.fillcontinents(color='0.8', lake_color='white')
-# show grid
-# project lat/lon coordinates
+# draw plate boundaries
+m1.readshapefile('/mnt/c/Users/lewiss/Documents/Research/Data/mapping/PB2002/PB2002_boundaries',
+                 name='tectonic_plates', drawbounds=True, color='red')
+# project grid lat/lon coordinates
 gtab['x'], gtab['y'] = m1(gtab.lon, gtab.lat)
-h5, = axis1.plot(gtab.x[gtab.dep == 600.], gtab.y[gtab.dep == 600.], 'o', mec='purple', mfc='none', markersize=4, linewidth=.001, label='600 km', alpha=.7)
-h4, = axis1.plot(gtab.x[gtab.dep == 450.], gtab.y[gtab.dep == 450.], 'o', mec='blue', mfc='none', markersize=2, linewidth=.001, label='450 km', alpha=.7)
-h3, = axis1.plot(gtab.x[gtab.dep == 300.], gtab.y[gtab.dep == 300.], 'o', mec='green', mfc='none', markersize=1, linewidth=.001, label='300 km', alpha=.7)
-h2, = axis1.plot(gtab.x[gtab.dep == 150.], gtab.y[gtab.dep == 150.], 'o', mec='yellow', mfc='none', markersize=.5, linewidth=.001, label='150 km', alpha=.7)
-h1, = axis1.plot(gtab.x[gtab.dep == 33.], gtab.y[gtab.dep == 33.], 'o', mec='red', mfc='none', markersize=.1, linewidth=.001, label='33 km', alpha=.7)
+# marker sizes for map symbols
+ms = [4, 2, 1, .5, .1]
+mc = ['purple', 'blue', 'green', 'yellow', 'red']
+# loop over unique depth values
+hh = []
+ii = 0
+for d in gtab.dep.drop_duplicates().sort_values(ascending=False).to_list():
+    h, = axis1.plot(gtab.x[gtab.dep == d], gtab.y[gtab.dep == d], 'o', mec=mc[ii], mfc='none',
+                    markersize=ms[ii], linewidth=.001, alpha=.7, clip_on=False, label=f'{d} km')
+    hh.append(h)
+    ii += 1
 # local area of interest
 x, y = m1([rgrd[2], rgrd[2], rgrd[3], rgrd[3], rgrd[2]], [rgrd[0], rgrd[1], rgrd[1], rgrd[0], rgrd[0]])
-axis1.plot(x, y, color='orange')
+axis1.plot(x, y, color='.5', linewidth=.5, alpha=.7)
 # show parallel and meridians
 m1.drawparallels(np.arange(-90., 120., 30.), linewidth=.1, dashes=(None, None))
 m1.drawmeridians(np.arange(0., 360., 60.), linewidth=.1, dashes=(None, None))
 # legend
-axis1.legend(handles=[h1, h2, h3, h4, h5], loc='best', fontsize=5)
+axis1.legend(handles=hh, loc='best', fontsize=5)
 # LOCAL
 # define map bounadries and resolution
 m2 = Basemap(projection='cyl', llcrnrlon=rgrd[2], llcrnrlat=rgrd[0],
              urcrnrlon=rgrd[3], urcrnrlat=rgrd[1], resolution='i', ax=axis2)
 # draw map
-m2.drawmapboundary(fill_color='none')
+m2.drawmapboundary(fill_color='none', color='.5')
 # fill continents
-m2.fillcontinents(color='0.8', lake_color='white')
+m2.fillcontinents(color='.8', lake_color='white')
+# draw plate boundaries
+m2.readshapefile('/mnt/c/Users/lewiss/Documents/Research/Data/mapping/PB2002/PB2002_boundaries',
+                 name='tectonic_plates', drawbounds=True, color='black')
 # show grid
-axis2.plot(gtab.lon[gtab.dep == 33.], gtab.lat[gtab.dep == 33.], 'o', mec='red', mfc='none', markersize=5, linewidth=.1)
-axis2.plot(gtab.lon[gtab.dep == 150.], gtab.lat[gtab.dep == 150.], 'o', mec='orange', mfc='none', markersize=10, linewidth=.1)
-axis2.plot(gtab.lon[gtab.dep == 300.], gtab.lat[gtab.dep == 300.], 'o', mec='green', mfc='none', markersize=15, linewidth=.1)
-axis2.plot(gtab.lon[gtab.dep == 450.], gtab.lat[gtab.dep == 450.], 'o', mec='blue', mfc='none', markersize=20, linewidth=.1)
-axis2.plot(gtab.lon[gtab.dep == 600.], gtab.lat[gtab.dep == 600.], 'o', mec='purple', mfc='none', markersize=25, linewidth=.1)
+axis2.plot(gtab.lon[gtab.dep == 33.], gtab.lat[gtab.dep == 33.], 'o',
+           mec='red', mfc='none', markersize=5, linewidth=.1, alpha=.7)
+axis2.plot(gtab.lon[gtab.dep == 150.], gtab.lat[gtab.dep == 150.], 'o',
+           mec='orange', mfc='none', markersize=10, linewidth=.1)
+axis2.plot(gtab.lon[gtab.dep == 300.], gtab.lat[gtab.dep == 300.], 'o',
+           mec='green', mfc='none', markersize=15, linewidth=.1, alpha=.7)
+axis2.plot(gtab.lon[gtab.dep == 450.], gtab.lat[gtab.dep == 450.], 'o',
+           mec='blue', mfc='none', markersize=20, linewidth=.1, alpha=.7)
+axis2.plot(gtab.lon[gtab.dep == 600.], gtab.lat[gtab.dep == 600.], 'o',
+           mec='purple', mfc='none', markersize=25, linewidth=.1, alpha=.7)
 # show parallel and meridians
-m1.drawparallels(np.arange(-90., 120., 30.), linewidth=.1, dashes=(None, None))
-m1.drawmeridians(np.arange(0., 360., 60.), linewidth=.1, dashes=(None, None))
+m2.drawparallels(np.arange(rgrd[0], rgrd[1], 2.), linewidth=.1, dashes=(None, None))
+m2.drawmeridians(np.arange(rgrd[2], rgrd[3], 2.), linewidth=.1, dashes=(None, None))
 # maximise figure
 plt.get_current_fig_manager().full_screen_toggle()
 # adjust plots

@@ -5,7 +5,6 @@ import glob
 import re
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import mpld3
 import geopy.distance as gdist
 from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
@@ -53,74 +52,44 @@ def get_traces_deci(evt_id, ori_time, time_win):
     return mseed
 
 
-def read_autopick_xml(xml_path, stream, phase='P'):
+def read_autopick_xml(xml_path, stream):
     """
     :param xml_path: path to .XML file containing picks to read
     :param stream: data streamer of waveforms to process
-    :param phase: seismic phase of interest
     :return: data streamer containing automatic picks in trace headers and total number of picks found
     """
+    # initialise counter
     npic = 0
-    # read resulting xml file
+    # loop over .xml file lines
     for line_xml in ETree.parse(xml_path).getroot()[0]:
+        # search pick sections
         if re.search('pick', str(line_xml.tag)):
-            # check picker
-            if not re.search('AIC', str(line_xml.attrib)):
-                continue
-            # check phase
-            if (line_xml[3].tag == 'phaseHint' and line_xml[3].text != phase) or\
-                    (line_xml[4].tag == 'phaseHint' and line_xml[4].text != phase):
-                continue
-            # station metadata
-            str1 = re.search("'publicID': '(.*?)'", str(line_xml.attrib)).group(1)
-            str2 = str1.split('.')
-            str3 = str2[2].split('-')
-            pik_net = str3[2]
-            if str2[4] is None:
-                pik_loc = ''
+            if len(line_xml) == 8 and line_xml[4].text == 'S':
+                channel = line_xml[1].attrib['channelCode'].replace('HHN', 'HHZ').replace('HHE', 'HHZ')\
+                    .replace('ENN', 'ENZ').replace('ENE', 'ENZ').replace('BHN', 'BHZ').replace('BHE', 'BHZ')
             else:
-                pik_loc = str2[4]
-            trace = stream.select(network=pik_net, station=str2[3], location=pik_loc, channel=str2[5])
+                channel = line_xml[1].attrib['channelCode']
+            # search for trace in streamer corresponding to pick
+            trace = stream.select(network=line_xml[1].attrib['networkCode'],
+                                  station=line_xml[1].attrib['stationCode'],
+                                  channel=channel)
+            # ignore pick if trace not in streamer
             if not trace:
                 continue
             else:
                 trace = trace[0]
-            # initialise pick table if needed
-            if not hasattr(trace.stats, 'auto_tt'):
-                trace.stats['auto_tt'] = []
-            trace.stats.auto_tt.append(datetime.strptime(line_xml[0][0].text, '%Y-%m-%dT%H:%M:%S.%fZ'))
+            if len(line_xml) == 6 and line_xml[3].text == 'P':
+                # initialise pick table if needed
+                if not hasattr(trace.stats, 'auto_ttp'):
+                    trace.stats['auto_ttp'] = []
+                trace.stats.auto_ttp.append(datetime.strptime(line_xml[0][0].text, '%Y-%m-%dT%H:%M:%S.%fZ'))
+            if len(line_xml) == 8 and line_xml[4].text == 'S':
+                # initialise pick table if needed
+                if not hasattr(trace.stats, 'auto_tts'):
+                    trace.stats['auto_tts'] = []
+                trace.stats.auto_tts.append(datetime.strptime(line_xml[0][0].text, '%Y-%m-%dT%H:%M:%S.%fZ'))
             npic += 1
     return stream, npic
-
-
-def get_automatic_picks(xml_path, stream):
-    # initialise counter
-    n_pick = 0
-    # read pick file
-    event = read_events(xml_path)[0]
-    for pick in event.picks:
-        if pick.waveform_id.location_code is None:
-            pick_loc = ''
-        else:
-            pick_loc = pick.waveform_id.location_code
-        trace = stream.select(network=pick.waveform_id.network_code, station=pick.waveform_id.station_code,
-                              location=pick_loc, channel=pick.waveform_id.channel_code)
-        if not trace:
-            continue
-        else:
-            trace = trace[0]
-        if pick.phase_hint[0] == 'P':
-            # initialise pick table if needed
-            if not hasattr(trace.stats, 'auto_ttp'):
-                trace.stats['auto_ttp'] = []
-            trace.stats.auto_ttp.append(pick.time.datetime)
-        elif pick.phase_hint[0] == 'S':
-            # initialise pick table if needed
-            if not hasattr(trace.stats, 'auto_tts'):
-                trace.stats['auto_tts'] = []
-            trace.stats.auto_tts.append(pick.time.datetime)
-        n_pick += 1
-    return stream, n_pick
 
 
 def get_catalogue_picks(client, evt_id, stream):
@@ -130,6 +99,7 @@ def get_catalogue_picks(client, evt_id, stream):
     :param stream: data streamer of waveforms to process
     :return: data streamer containing catalogue picks in trace headers and total number of picks found
     """
+    # initialise counter
     n_pick = 0
     # retrieve event data
     try:
@@ -137,27 +107,27 @@ def get_catalogue_picks(client, evt_id, stream):
     except:
         print(f'Event ID missing from catalogue: {evt_id}')
         return stream, 0
+    # select first and only (?) event
     if event:
         event = event[0]
     else:
         return stream, 0
+    # loop over traces
     for pick in event.picks:
-        if pick.waveform_id.location_code is None:
-            pick_loc = ''
-        else:
-            pick_loc = pick.waveform_id.location_code
+        # select for trace in streamer corresponding to pick metadata
         trace = stream.select(network=pick.waveform_id.network_code, station=pick.waveform_id.station_code,
-                              location=pick_loc, channel=pick.waveform_id.channel_code)
+                              channel=pick.waveform_id.channel_code)
+        # ignore pick if trace not in streamer
         if not trace:
             continue
         else:
             trace = trace[0]
-        if pick.phase_hint[0] == 'P':
+        if pick.phase_hint == 'P':
             # initialise pick table if needed
             if not hasattr(trace.stats, 'cata_ttp'):
                 trace.stats['cata_ttp'] = []
             trace.stats.cata_ttp.append(pick.time.datetime)
-        elif pick.phase_hint[0] == 'S':
+        if pick.phase_hint == 'S':
             # initialise pick table if needed
             if not hasattr(trace.stats, 'cata_tts'):
                 trace.stats['cata_tts'] = []
@@ -215,24 +185,24 @@ def add_event_data(stream, event_cata, ref_mod, sta_inv):
                               station[0].stations[0].channels[0].longitude))
         stream[k].stats.distance = dis.m
         # compute theoretical travel time
-        if hasattr(stream[k].stats, 'auto_ttp'):
-            theo_ttp = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
-                                               distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
-                                               phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
-            # add theoretical travel time to streamer header
-            if len(theo_ttp) != 0:
-                stream[k].stats['theo_ttp'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_ttp[0].time)
-            else:
-                stream[k].stats['theo_ttp'] = np.nan
-        if hasattr(stream[k].stats, 'auto_tts'):
-            theo_tts = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
-                                               distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
-                                               phase_list=['s', 'S', 'Sg', 'Sn', 'Sdiff'])
-            # add theoretical travel time to streamer header
-            if len(theo_tts) != 0:
-                stream[k].stats['theo_tts'] = event_cata.preferred_origin().time.datetime+timedelta(seconds=theo_tts[0].time)
-            else:
-                stream[k].stats['theo_tts'] = np.nan
+        theo_ttp = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
+                                           distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
+                                           phase_list=['p', 'P', 'Pg', 'Pn', 'Pdiff'])
+        # add theoretical travel time to streamer header
+        if len(theo_ttp) != 0:
+            stream[k].stats['theo_ttp'] = [event_cata.preferred_origin().time.datetime +
+                                           timedelta(seconds=theo_ttp[0].time)]
+        else:
+            stream[k].stats['theo_ttp'] = [np.nan]
+        theo_tts = theory.get_travel_times(source_depth_in_km=event_cata.preferred_origin().depth/1000.,
+                                           distance_in_degree=dis.km / (2 * np.pi * rrad / 360),
+                                           phase_list=['s', 'S', 'Sg', 'Sn', 'Sdiff'])
+        # add theoretical travel time to streamer header
+        if len(theo_tts) != 0:
+            stream[k].stats['theo_tts'] = [event_cata.preferred_origin().time.datetime +
+                                           timedelta(seconds=theo_tts[0].time)]
+        else:
+            stream[k].stats['theo_tts'] = [np.nan]
         k += 1
     # delete selected waveforms
     for trace in to_del:
@@ -241,153 +211,6 @@ def add_event_data(stream, event_cata, ref_mod, sta_inv):
         except:
             continue
     return stream
-
-
-def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
-    """
-    :param stream: data streamer of waveforms to process
-    :param win_tab: list of datetimes defining the beginning of 30-s time windows containing >6 picks
-    :param fig_name: file name & path of the output figure (figure is displayed if none is provided)
-    :return: nothing
-    """
-    # define axis limits for both axes
-    tmin = datetime.strptime(str(min([trace.stats.starttime for trace in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
-    tmax = datetime.strptime(str(max([trace.stats.endtime for trace in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
-    xlim = [tmin, tmax]
-    # create figure
-    fig = plt.figure(figsize=(9, 5), dpi=200)
-    # set x-axis limits
-    plt.gca().set_xlim(xlim)
-    # show catalogue events
-    evt_lst = isn_client.get_events(starttime=xlim[0], endtime=xlim[1])
-    # explosions counter
-    n_exp = 0
-    for event in evt_lst:
-        # normalised x-axis coordinate (because of problems with datetimes and JSON)
-        xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
-        if event.magnitudes:
-            # plot marker
-            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
-                     [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
-            # display event type & magnitude
-            plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='red', fontsize=10, ha='center', va='bottom',
-                     clip_on=False, transform=plt.gca().transAxes)
-        else:
-            n_exp += 1
-            # plot marker
-            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
-                     [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
-            # display event type
-            plt.text(xpos, 1.03, 'EXP', color='green', fontsize=10, ha='center', va='bottom',
-                     clip_on=False, transform=plt.gca().transAxes)
-    # show EMSC events
-    tele_client = Client('EMSC')
-    # M>5 teleseismic events catalogue
-    evt_lst1 = []
-    try:
-        evt_lst1 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=5)
-    except:
-        print(' No M>5 teleseismic events')
-    if evt_lst1:
-        for event in evt_lst1:
-            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
-                continue
-            # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
-            # plot marker
-            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
-                     [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
-            # display event type & magnitude
-            plt.text(xpos, 1.07, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='purple', fontsize=10, ha='center', va='bottom',
-                     clip_on=False, transform=plt.gca().transAxes)
-    # M>3 regional events catalogue
-    evt_lst2 = []
-    try:
-        evt_lst2 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=3,
-                                          minlatitude=23, maxlatitude=43, minlongitude=20, maxlongitude=50)
-    except:
-        print('No M>3 regional events')
-    if evt_lst2:
-        for event in evt_lst2:
-            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
-                continue
-            # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
-            # plot marker
-            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime],
-                     [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
-            # display event type & magnitude
-            plt.text(xpos, 1.05, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='orange', fontsize=10, ha='center', va='bottom',
-                     clip_on=False, transform=plt.gca().transAxes)
-    # display total number of stations
-    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom',
-             fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
-    # display total number of local events
-    plt.text(1.01, 1.01, f"Nl={len(evt_lst)-n_exp}", ha='left', va='bottom', color='red',
-             fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
-    # display total number of blasts
-    plt.text(1.01, 1.03, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=10,
-             fontweight='bold', transform=plt.gca().transAxes)
-    # display total number of regional events
-    plt.text(1.01, 1.05, f"Nr={len(evt_lst2)}", ha='left', va='bottom', color='orange',
-             fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
-    # display total number of teleseismic events
-    plt.text(1.01, 1.07, f"Nt={len(evt_lst1)}", ha='left', va='bottom', color='purple',
-             fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
-    # initialise counter
-    n_trace = 0
-    # loop over stream channels
-    for trace in stream:
-        # counter
-        n_trace += 1
-        # build time vector
-        t_vec = np.arange(0, len(trace)) * np.timedelta64(int(trace.stats.delta * 1000), '[ms]')\
-            + np.datetime64(str(trace.stats.starttime)[:-1])
-        # plot waveform
-        plt.plot(t_vec, trace.data/trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
-        if hasattr(trace.stats, 'auto_tt'):
-            # number of picks per station
-            if len(trace.stats.auto_tt) > 10:
-                # show number of picks
-                plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
-                         color='red', fontsize=10, clip_on=False, ha='left', va='center', transform=plt.gca().transAxes)
-                # show station/channel name
-                plt.text(-.01, n_trace/(len(stream)+1),
-                         f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
-                         color='red', fontsize=10, clip_on=False,
-                         ha='right', va='center', transform=plt.gca().transAxes)
-            else:
-                # show number of picks
-                plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
-                         color='blue', fontsize=10, clip_on=False,
-                         ha='left', va='center', transform=plt.gca().transAxes)
-                # show station/channel name
-                plt.text(-.01, n_trace/(len(stream)+1),
-                         f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
-                         color='blue', fontsize=10, clip_on=False,
-                         ha='right', va='center', transform=plt.gca().transAxes)
-            for at in trace.stats.auto_tt:
-                plt.plot([at, at], [n_trace-.5, n_trace+.5], color='blue', label='Autopick')
-    # 30-s time windows with >6 picks
-    for win in win_tab:
-        plt.gca().fill_betweenx([0, n_trace+1], win-timedelta(minutes=2.5),
-                                win+timedelta(minutes=2.5), color='red', alpha=.5)
-    # set y-axis limits
-    plt.gca().set_ylim([0, n_trace+1])
-    # remove y-axis tick labels
-    plt.gca().set_yticklabels([])
-    # set x-axis font size
-    plt.gca().tick_params(axis='x', which='major', labelsize=10)
-    # save figure
-    file_id = open(fig_name, 'w')
-    mpld3.save_html(fig, file_id)
-    print(f" Figure saved: {fig_name}")
-    plt.close()
-    file_id.close()
-    return
 
 
 def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
@@ -423,8 +246,10 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     # show axis grids
     axis1.grid(which='both', axis='both')
     # set x-axis limits
-    axis1.set_xlim([event_cata.preferred_origin().time.datetime - twin,
-                    event_cata.preferred_origin().time.datetime + twin])
+    # axis1.set_xlim([event_cata.preferred_origin().time.datetime - twin,
+    #                 event_cata.preferred_origin().time.datetime + twin])
+    axis1.set_xlim([event_cata.preferred_origin().time.datetime - timedelta(minutes=0.5),
+                    event_cata.preferred_origin().time.datetime + timedelta(minutes=2.5)])
     # set date format to x-axis tick labels
     axis1.xaxis.set_major_formatter(DateFormatter('%H:%M:%S'))
     # AXIS 2: RESIDUAL OVER DISTANCE PLOT
@@ -477,16 +302,20 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     # intialise counters
     n_trace = 0
     # initialise residual tables
-    tres_tab = []
-    theo_tab = []
+    pres_tab = []
+    sres_tab = []
+    ptheo_tab = []
+    stheo_tab = []
     # initialise tables for legend
-    h1 = []
-    h2 = []
-    h3 = []
-    h4 = []
-    h5 = []
+    hw = []
+    hthp = []
+    hcp = []
+    hcs = []
+    hta = []
+    hap = []
+    has = []
     # initialise tables for map legend
-    hm1 = []
+    hs = []
     # initialise list of station labels
     stn_lbl = []
     for trace in stream:
@@ -498,35 +327,35 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
         t_vec = np.arange(0, len(trace)) * np.timedelta64(int(trace.stats.delta * 1000), '[ms]')\
             + np.datetime64(str(trace.stats.starttime)[:-1])
         # plot waveform
-        h1, = axis1.plot(t_vec, trace.data / trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
-        # plot theoretical P travel times
+        hw, = axis1.plot(t_vec, trace.data / trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
+        # THEORY P
         if hasattr(trace.stats, 'theo_ttp') and trace.stats.theo_ttp:
-            h2, = axis1.plot([trace.stats.theo_ttp, trace.stats.theo_ttp], [n_trace - 1, n_trace + 1],
-                             color='blue', linestyle='dotted', label=vel_mod)
-        # plot theoretical S travel times
+            hthp, = axis1.plot([trace.stats.theo_ttp[0], trace.stats.theo_ttp[0]], [n_trace - 1, n_trace + 1],
+                               color='blue', linestyle='dotted', label=vel_mod + ' P/S')
+        # THEORY S
         if hasattr(trace.stats, 'theo_tts') and trace.stats.theo_tts:
-            axis1.plot([trace.stats.theo_tts, trace.stats.theo_tts], [n_trace - 1, n_trace + 1],
-                             color='blue', linestyle='dotted', label=vel_mod)
+            axis1.plot([trace.stats.theo_tts[0], trace.stats.theo_tts[0]], [n_trace - 1, n_trace + 1],
+                       color='cyan', linestyle='dotted')
         # plot station in map
         st = isn_inv.select(network=trace.stats.network, station=trace.stats.station, channel=trace.stats.channel)
         if not st:
             print(f'Missing station: {stn_lbl[n_trace-1]}')
-        # use different symbols and colours for different network codes
-        hm1, = axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
-                          '^', mfc='blue', mec='none', markersize=5, alpha=.7, label=trace.stats.network)
-        # AUTOMATIC PICKS
+        hs, = axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
+                         '^', mfc='blue', mec='none', markersize=5, alpha=.7, label=trace.stats.network)
+        # AUTOMATIC P
         # initialise index for pick of interest
-        k_apic = None
+        k_apicp = None
         # make sure station has automatic picks
-        if hasattr(trace.stats, 'auto_tt') and trace.stats.auto_tt:
+        if hasattr(trace.stats, 'auto_ttp') and trace.stats.auto_ttp:
             # time difference between automatic picks and theoretical arrival
-            tdif = [abs((xx - trace.stats.theo_tt).total_seconds()) for xx in trace.stats.auto_tt]
+            tdif = [abs((xx - trace.stats.theo_ttp[0]).total_seconds()) for xx in trace.stats.auto_ttp]
             # initialise counter
             n_pic = 0
             # loop over all picks for channel
-            for pick in trace.stats.auto_tt:
+            for pick in trace.stats.auto_ttp:
                 pid = f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}"
                 fnd = False
+                # check if pick listed as arrival (i.e. used in event location)
                 if events:
                     for a in event_auto.preferred_origin().arrivals:
                         if re.search(pid, str(a.pick_id)):
@@ -540,91 +369,188 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
                             if fnd:
                                 break
                 if fnd:
-                    # show picks used in location
-                    h4, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='red', label='Auto. arrivals')
+                    # show picks selected for location
+                    hta, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='red', label='Arrival P/S')
                     # right-hand side marker to quickly know which station has picks
-                    axis1.plot(1.01, n_trace/(len(stream)+1), 'o', markersize=5, mec='red', mfc='none',
+                    axis1.plot(1.01, n_trace/(len(stream)+1), 'o', markersize=5, mfc='none', mec='red',
                                alpha=.7, clip_on=False, transform=axis1.transAxes)
                 else:
-                    # show picks NOT used in location
-                    h5, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='purple', label='Auto. picks')
+                    # show picks NOT selected for location
+                    hap, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='purple', label='Automatic P')
                 # right-hand side marker to quickly know which station has picks
                 axis1.plot(1.01, n_trace/(len(stream)+1), 'o', markersize=5, mfc='purple', mec='none',
                            alpha=.7, clip_on=False, transform=axis1.transAxes)
                 # highlight station in map
                 axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
-                           'o', markersize=7, color='purple', mfc='none', alpha=.7)
+                           'o', markersize=7, mfc='none', mec='purple', alpha=.7)
                 # find pick >OT and <[tlim]s difference with theoretical arrival
                 if pick > event_cata.preferred_origin().time.datetime and \
                         n_pic == tdif.index(min(tdif)) and tdif[n_pic] < tlim:
-                    k_apic = n_pic
+                    k_apicp = n_pic
                 # counter
                 n_pic += 1
-        # CATALOGUE PICKS
-        # make sure station has catalogue picks
-        if hasattr(trace.stats, 'cata_tt') and trace.stats.cata_tt:
+        # AUTOMATIC S
+        # initialise index for pick of interest
+        k_apics = None
+        # make sure station has automatic picks
+        if hasattr(trace.stats, 'auto_tts') and trace.stats.auto_tts:
+            # time difference between automatic picks and theoretical arrival
+            tdif = [abs((xx - trace.stats.theo_tts[0]).total_seconds()) for xx in trace.stats.auto_tts]
+            # initialise counter
+            n_pic = 0
+            # loop over all picks for channel
+            for pick in trace.stats.auto_tts:
+                pid = f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}"
+                fnd = False
+                # check if pick listed as arrival (i.e. used in event location)
+                if events:
+                    for a in event_auto.preferred_origin().arrivals:
+                        if re.search(pid, str(a.pick_id)):
+                            xid = str(event_auto.preferred_origin().resource_id)\
+                                .replace('smi:org.gfz-potsdam.de/geofon/', '')
+                            rid = str(a.resource_id).replace(f"_{xid}", '')
+                            for p in event_auto.picks:
+                                if rid == p.resource_id and pick == p.time.datetime:
+                                    fnd = True
+                                    break
+                            if fnd:
+                                break
+                if fnd:
+                    # show picks selected for location
+                    axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='red')
+                    # right-hand side marker to quickly know which station has picks
+                    axis1.plot(1.02, n_trace/(len(stream)+1), 'o', markersize=5, mfc='none', mec='red',
+                               alpha=.7, clip_on=False, transform=axis1.transAxes)
+                else:
+                    # show picks NOT selected for location
+                    has, = axis1.plot([pick, pick], [n_trace - 1, n_trace + 1], color='magenta', label='Automatic S')
+                # right-hand side marker to quickly know which station has picks
+                axis1.plot(1.02, n_trace/(len(stream)+1), 'o', markersize=5, mfc='magenta', mec='none',
+                           alpha=.7, clip_on=False, transform=axis1.transAxes)
+                # highlight station in map
+                axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
+                           'd', markersize=7, color='magenta', mfc='none', alpha=.7)
+                # find pick >OT and <[tlim]s difference with theoretical arrival
+                if pick > event_cata.preferred_origin().time.datetime and \
+                        n_pic == tdif.index(min(tdif)) and tdif[n_pic] < tlim:
+                    k_apics = n_pic
+                # counter
+                n_pic += 1
+        # CATALOGUE P
+        # make sure station has catalogue P picks
+        if hasattr(trace.stats, 'cata_ttp') and trace.stats.cata_ttp:
             # plot pick on top of waveform
-            h3, = axis1.plot([trace.stats.cata_tt[0], trace.stats.cata_tt[0]], [n_trace - 1, n_trace + 1],
-                             color='orange', label='Catalogue')
+            hcp, = axis1.plot([trace.stats.cata_ttp[0], trace.stats.cata_ttp[0]], [n_trace - 1, n_trace + 1],
+                              color='orange', label='Catalogue P')
             # right-hand side marker to quickly know which station has picks
-            axis1.plot(1.02, n_trace/(len(stream)+1), 'o', markersize=5, mfc='orange', mec='none',
+            axis1.plot(1.03, n_trace/(len(stream)+1), 'o', markersize=5, mfc='orange', mec='none',
                        alpha=.7, clip_on=False, transform=axis1.transAxes)
             # highlight station in map
             axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
                        's', markersize=7, mec='orange', mfc='none', alpha=.7)
+        # CATALOGUE S
+        # make sure station has catalogue S picks
+        if hasattr(trace.stats, 'cata_tts') and trace.stats.cata_tts:
+            # plot pick on top of waveform
+            hcs, = axis1.plot([trace.stats.cata_tts[0], trace.stats.cata_tts[0]], [n_trace - 1, n_trace + 1],
+                              color='yellow', label='Catalogue S')
+            # right-hand side marker to quickly know which station has picks
+            axis1.plot(1.04, n_trace/(len(stream)+1), 'o', markersize=5, mfc='yellow', mec='none',
+                       alpha=.7, clip_on=False, transform=axis1.transAxes)
+            # highlight station in map
+            axis3.plot(st.networks[0].stations[0].longitude, st.networks[0].stations[0].latitude,
+                       '^', markersize=7, mec='yellow', mfc='none', alpha=.7)
+        # RESIDUALS
         # residual w.r.t. catalogue pick (if both exist)
-        if hasattr(trace.stats, 'cata_tt') and k_apic is not None:
+        if hasattr(trace.stats, 'cata_ttp') and k_apicp is not None:
             # table for residuals (for statistics)
-            tres_tab.append((trace.stats.auto_tt[k_apic] - trace.stats.cata_tt[0]).total_seconds())
+            pres_tab.append((trace.stats.auto_ttp[k_apicp] - trace.stats.cata_ttp[0]).total_seconds())
             # residual plot
-            axis2.plot((trace.stats.auto_tt[k_apic] - trace.stats.cata_tt[0]).total_seconds(),
+            axis2.plot((trace.stats.auto_ttp[k_apicp] - trace.stats.cata_ttp[0]).total_seconds(),
                        n_trace, 'o', markersize=5, mfc='orange', mec='none', alpha=.7)
         # residual w.r.t. theoretical pick (if automatic pick exists)
-        if k_apic is not None:
+        if k_apicp is not None:
             # table for residuals (for statistics)
-            theo_tab.append((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds())
+            ptheo_tab.append((trace.stats.auto_ttp[k_apicp] - trace.stats.theo_ttp[0]).total_seconds())
             # residual plot
-            axis2.plot((trace.stats.auto_tt[k_apic] - trace.stats.theo_tt).total_seconds(), n_trace,
+            axis2.plot((trace.stats.auto_ttp[k_apicp] - trace.stats.theo_ttp[0]).total_seconds(), n_trace,
                        'o', markersize=5, mfc='blue', mec='none', alpha=.7)
-    # display catalogue origin time
-    axis1.plot([event_cata.preferred_origin().time.datetime, event_cata.preferred_origin().time.datetime],
-               [0, n_trace+1], color='orange')
+        # residual w.r.t. catalogue pick (if both exist)
+        if hasattr(trace.stats, 'cata_tts') and k_apics is not None:
+            # table for residuals (for statistics)
+            sres_tab.append((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds())
+            # residual plot
+            print((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds())
+            axis2.plot((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds(),
+                       n_trace, '^', markersize=5, mfc='orange', mec='none', alpha=.7)
+        # residual w.r.t. theoretical pick (if automatic pick exists)
+        if k_apics is not None:
+            # table for residuals (for statistics)
+            stheo_tab.append((trace.stats.auto_tts[k_apics] - trace.stats.theo_tts[0]).total_seconds())
+            # residual plot
+            print((trace.stats.auto_tts[k_apics] - trace.stats.theo_tts[0]).total_seconds())
+            axis2.plot((trace.stats.auto_tts[k_apics] - trace.stats.theo_tts[0]).total_seconds(), n_trace,
+                       '^', markersize=5, mfc='blue', mec='none', alpha=.7)
     # display catalogue residuals RMS
-    if len(tres_tab) > 1:
-        axis2.text(.01, .03, f"N={len(tres_tab)}: {np.sqrt(np.mean(np.array(tres_tab)**2)):.2f} s",
+    if len(pres_tab) > 1:
+        axis2.text(.01, .03, f"Np={len(pres_tab)}: {np.sqrt(np.mean(np.array(pres_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='orange', transform=axis2.transAxes)
     # display theoretical residuals RMS
-    if len(theo_tab) > 1:
-        axis2.text(.01, .01, f"N={len(theo_tab)}: {np.sqrt(np.mean(np.array(theo_tab)**2)):.2f} s",
+    if len(ptheo_tab) > 1:
+        axis2.text(.01, .01, f"Np={len(ptheo_tab)}: {np.sqrt(np.mean(np.array(ptheo_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='blue', transform=axis2.transAxes)
-    h6 = []
+    if len(sres_tab) > 1:
+        axis2.text(.01, .09, f"Ns={len(sres_tab)}: {np.sqrt(np.mean(np.array(sres_tab)**2)):.2f} s",
+                   fontweight='bold', fontsize=8, color='yellow', transform=axis2.transAxes)
+    # display theoretical residuals RMS
+    if len(stheo_tab) > 1:
+        axis2.text(.01, .07, f"Ns={len(stheo_tab)}: {np.sqrt(np.mean(np.array(stheo_tab)**2)):.2f} s",
+                   fontweight='bold', fontsize=8, color='cyan', transform=axis2.transAxes)
+    # display catalogue origin time
+    hco = []
+    if event_cata:
+        hco, = axis1.plot([event_cata.preferred_origin().time.datetime, event_cata.preferred_origin().time.datetime],
+                          [0, n_trace+1], color='lime', label='Catalogue OT')
+    # display autoloc origin times
+    hao = []
     if events:
-        # display autoloc origin times
         for e in events:
-            h6, = axis1.plot([e.preferred_origin().time.datetime,
-                              e.preferred_origin().time.datetime], [0, n_trace+1],
-                             color='green', label='Autoloc')
+            hao, = axis1.plot([e.preferred_origin().time.datetime,
+                               e.preferred_origin().time.datetime], [0, n_trace+1],
+                              color='green', label='Autoloc OT')
         # display autoloc residuals RMS
         axis2.text(.01, .05, f"N={event_auto.preferred_origin().quality.used_phase_count}:"
                              f" {event_auto.preferred_origin().quality.standard_error:.2f} s",
                    fontweight='bold', fontsize=8, color='purple', transform=axis2.transAxes)
+        # display number of Autoloc events
+        axis1.text(event_cata.preferred_origin().time.datetime, n_trace+1,
+                   f"N={len(events)}", color='green', ha='center', va='bottom')
     # axis limits
     axis1.set_ylim([0, n_trace + 1])
     axis2.set_ylim([0, n_trace + 1])
     # legend
-    if not h4:
-        if not h3:
-            hh = [h1, h2, h5]
-        else:
-            hh = [h1, h2, h3, h5]
-    else:
-        if not h3:
-            hh = [h1, h2, h4, h5]
-        else:
-            if events:
-                hh = [h1, h2, h3, h6, h5, h4]
+    if events:
+        if event_cata:
+            if has:
+                hh = [hw, hco, hao, hthp, hcp, hcs, hap, has, hta]
             else:
-                hh = [h1, h2, h3, h5, h4]
+                hh = [hw, hco, hao, hthp, hcp, hcs, hap, hta]
+        else:
+            if has:
+                hh = [hw, hao, hthp, hcp, hcs, hap, has]
+            else:
+                hh = [hw, hao, hthp, hcp, hcs, hap]
+    else:
+        if event_cata:
+            if has:
+                hh = [hw, hco, hthp, hcp, hcs, hap, has]
+            else:
+                hh = [hw, hco, hthp, hcp, hcs, hap]
+        else:
+            if has:
+                hh = [hw, hthp, hcp, hcs, hap, has]
+            else:
+                hh = [hw, hthp, hcp, hcs, hap]
     axis1.legend(handles=hh, loc='lower left', fontsize=8)
     # station and pick numbers
     axis1.text(-.01, 1.01, f"N={n_trace}", ha='right', va='center', transform=axis1.transAxes)
@@ -641,10 +567,10 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     for nt in isn_inv:
         for st in nt.stations:
             if not stream.select(network=nt.code, station=st.code):
-                axis3.plot(st.longitude, st.latitude, 'x', markersize=7, color='black', mfc='none', alpha=.7)
+                axis3.plot(st.longitude, st.latitude, 'x', mec='black', mfc='none', markersize=7, alpha=.7)
     # plot catalogue event location
     hc, = axis3.plot(event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude, '*',
-                     color='orange', markersize=10, markeredgecolor='black', label='Catalogue', alpha=.7)
+                     mfc='orange', mec='black', markersize=10, label='Catalogue', alpha=.7)
     ell_unc = mpl.patches.Ellipse((event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude),
                                   width=event_cata.preferred_origin().longitude_errors.uncertainty,
                                   height=event_cata.preferred_origin().latitude_errors.uncertainty,
@@ -654,18 +580,26 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     if events:
         # plot autoloc events location
         for e in events:
-            ha, = axis3.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
-                             color='green', markersize=10, markeredgecolor='black', label='Autoloc', alpha=.7)
+            if len(events) > 1 and e == event_auto:
+                # highlight event closest to catalogue event
+                axis3.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
+                           mfc='red', mec='black', markersize=10, alpha=.7)
+            else:
+                # show autoloc events
+                ha, = axis3.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
+                                 mfc='green', mec='black', markersize=10, label='Autoloc', alpha=.7)
+            # build ellipce object
             ell_unc = mpl.patches.Ellipse((e.preferred_origin().longitude, e.preferred_origin().latitude),
                                           width=e.preferred_origin().longitude_errors.uncertainty/(2.*np.pi*rrad/360.),
                                           height=e.preferred_origin().latitude_errors.uncertainty /
                                           (2.*np.pi*rrad/360.), color='green', alpha=.1)
-        axis3.add_patch(ell_unc)
-    # map legend
-    if events:
-        hm = [hm1, hc, ha, hf, hq]
+            # plot error ellipse
+            axis3.add_patch(ell_unc)
+        # map legend
+        hm = [hs, hc, ha, hf, hq]
     else:
-        hm = [hm1, hc, hf, hq]
+        # map legend
+        hm = [hs, hc, hf, hq]
     axis3.legend(handles=hm, loc='upper left', fontsize=8)
     # AXIS 4: INSET MAP FOR REGIONAL SETTINGS
     axis4 = inset_axes(axis3, '30%', '18%', loc='lower left')
@@ -681,7 +615,7 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
     # EVENTS
     # plot catalogue event location
     axis4.plot(event_cata.preferred_origin().longitude, event_cata.preferred_origin().latitude, '*',
-               color='orange', markersize=10, markeredgecolor='black', alpha=.7)
+               mfc='orange', mec='black', markersize=10, alpha=.7)
     # display catalogue magnitude
     if event_cata.preferred_magnitude().mag and not np.isnan(event_cata.preferred_magnitude().mag):
         axis4.text(event_cata.preferred_origin().longitude-2., event_cata.preferred_origin().latitude,
@@ -691,7 +625,7 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
         # plot autoloc event locations and magnitudes
         for e in events:
             axis4.plot(e.preferred_origin().longitude, e.preferred_origin().latitude, '*',
-                       color='green', markersize=10, markeredgecolor='black', alpha=.7)
+                       mfc='green', mec='black', markersize=10, alpha=.7)
             if e.preferred_magnitude() and e.preferred_magnitude().mag:
                 axis4.text(e.preferred_origin().longitude+2., e.preferred_origin().latitude,
                            f"M{e.preferred_magnitude().mag:3.1f}",
@@ -734,7 +668,6 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
 # input parameters
 ntw = 'IS'
 chn = '(B|H|E)(H|N)(Z|N|E)'
-pic = 'AIC'
 fpar = {'rmhp': 5., 'taper': 10., 'bworder': 4, 'bwminf': 4., 'bwmaxf': 8.,
         'sta': .2, 'lta': 10., 'trigon': 3., 'trigoff': 1.5}
 
@@ -776,21 +709,6 @@ etab = pd.read_csv(f"{wdir}/01-06-2021_01-06-2022_M3.csv", parse_dates=['OriginT
 # event experiments
 twin = timedelta(minutes=5)
 
-evt = '20210615230854375'
-oxml = f'{evt}_events.xml'
-get_automatic_picks(f"{wdir}/{oxml}", twin)
-# isn_traces = read(f"{wdir}/{oxml.replace('_picks.xml', '.mseed')}")
-# isn_traces, na = read_autopick_xml(f"{wdir}/{oxml}", isn_traces)
-# print(f'{na} automatic picks')
-# for tr in isn_traces:
-#     print(tr.stats)
-#     exit()
-#     print(f"{tr.stats.network}.{tr.stats.station}.{tr.stats.location}.{tr.stats.channel}")
-#     if hasattr(tr.stats, 'auto_ttp'):
-#         print(f"P: {len(tr.stats.auto_ttp)}")
-#     if hasattr(tr.stats, 'auto_tts'):
-#         print(f"S: {len(tr.stats.auto_tts)}")
-
 ########################################################################################################################
 # DATA PROCESSING
 if_proc = False
@@ -800,8 +718,8 @@ if if_proc:
         # read event parameters
         evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''),
                                                   '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
-        if evt == '20210617215634852' or evt == '20211027045305932':
-            continue
+        # if evt == '20210617215634852' or evt == '20211027045305932':
+        #     continue
         evt_cata = isn_client.get_events(eventid=erow.EventID)[0]
         print(f"{evt} M{evt_cata.preferred_magnitude().mag:3.1f}")
 
@@ -837,7 +755,6 @@ if if_proc:
             print(f" Running playback for {evt}")
             os.system(f'{wdir}/playback.sh {evt}')
         print()
-        exit()
 
 ########################################################################################################################
 # FIGURE BUILDING
@@ -867,12 +784,12 @@ if if_plot:
         # sort according to newly added distance to event
         isn_traces.sort(['distance'], reverse=True)
         # check if playback was ran
-        if path.exists(f"{wdir}/{oxml}") == 0:
+        if path.exists(f"{wdir}/{oxml}") == 0 or os.path.getsize(f"{wdir}/{oxml}") == 0:
             print(f' Playback not ran for {evt}')
             print()
             continue
         # read output file
-        isn_traces, na = read_autopick_xml(f"{wdir}/{oxml}", isn_traces, 'P')
+        isn_traces, na = read_autopick_xml(f"{wdir}/{oxml}", isn_traces)
         if na < 2:
             print(' Not enough automatic picks')
             print()
@@ -950,4 +867,3 @@ if if_plot:
             plot_autopick_evt_sec(isn_traces, evt_cata, f"{wdir}/{oxml.replace('_picks.xml', '.png')}")
         isn_traces = None
         print()
-        exit()

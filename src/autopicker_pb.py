@@ -831,7 +831,7 @@ if if_plot:
             if re.search('MMA', tr.stats.station) or re.search('MMB', tr.stats.station) or \
                     re.search('MMC', tr.stats.station):
                 isn_traces.remove(tr)
-        # check bindings to see what other stations and/or channels to remove
+        # check scautopick bindings to remove unlisted stations and/or channels
         flst = glob.glob('/home/sysop/seiscomp/etc/key/station_IS_*')
         for file in flst:
             if os.path.getsize(file) == 0:
@@ -847,10 +847,10 @@ if if_plot:
                     if wf.stats.channel != lines[1].split(':')[1].replace('\n', '').split('_')[1]+'Z':
                         isn_traces.remove(wf)
         # apply taper to all traces
-        isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['rmhp'], side='left')
+        isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['taper'], side='left')
         # apply high-pass filter to all traces
-        isn_traces.filter('highpass', freq=1./fpar['taper'])
-        # apply Butterworth band-pass filter to all traces
+        isn_traces.filter('highpass', freq=1./fpar['rmhp'])
+        # apply band-pass filter to all traces
         isn_traces.filter('bandpass', freqmin=fpar['bwminf'], freqmax=fpar['bwmaxf'], corners=fpar['bworder'])
         # # downsample data (to avoid memory issues when plotting)
         # isn_traces.resample(1.0, window='hann')

@@ -5,13 +5,12 @@ import re
 import filecmp
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-import mpld3
 import geopy.distance as gdist
 from mpl_toolkits.basemap import Basemap
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import pandas as pd
 import numpy as np
-import statistics
+from matplotlib.dates import DateFormatter
 from scipy import signal
 from datetime import datetime, timedelta
 import xml.etree.ElementTree as ETree
@@ -427,10 +426,10 @@ def plot_autopick_evt_sec(stream, auto_tab, hand_tab, evt_param, filt_param, ind
             n_theo += 1
     # display statistics on residuals
     if n_tres > 1:
-        axis2.text(.95 * xlim2[0], 4, f"N={n_tres}: {statistics.mean(tres_tab):.2f} \u00B1 {statistics.stdev(tres_tab):.2f} [s]",
+        axis2.text(.95 * xlim2[0], 4, f"N={n_tres}: {np.sqrt(np.mean(np.array(tres_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='orange')
     if n_theo > 1:
-        axis2.text(.95 * xlim2[0], 1, f"N={n_theo}: {statistics.mean(theo_tab):.2f} \u00B1 {statistics.stdev(theo_tab):.2f} [s]",
+        axis2.text(.95 * xlim2[0], 1, f"N={n_theo}: {np.sqrt(np.mean(np.array(theo_tab)**2)):.2f} s",
                    fontweight='bold', fontsize=8, color='blue')
     # axis limits
     axis1.set_ylim([0, n_trace + 1])
@@ -504,7 +503,7 @@ def plot_autopick_evt_sec(stream, auto_tab, hand_tab, evt_param, filt_param, ind
     m.drawmapboundary(fill_color='white')
     m.fillcontinents(color='0.8', lake_color='white')
     # area of interest
-    axis4.plot([mgrd[2]+.5, mgrd[2]+.5, mgrd[3]-.5, mgrd[3]-.5, mgrd[2]+.5], [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], 'r')
+    axis4.plot([mgrd[2]+.5, mgrd[2]+.5, mgrd[3]-.5, mgrd[3]-.5, mgrd[2]+.5], [mgrd[0], mgrd[1], mgrd[1], mgrd[0], mgrd[0]], color='red')
     # distance from centre of local map
     axis4.set_title(f"{gdist.distance((mgrd[0]+(mgrd[1]-mgrd[0])/2., mgrd[2]+(mgrd[3]-mgrd[2])/2.), (evt_param['elat'], evt_param['elon'])).km:.2f} km")
     # event
@@ -541,80 +540,96 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
     tmax = datetime.strptime(str(max([trace.stats.endtime for trace in stream])), '%Y-%m-%dT%H:%M:%S.%fZ')
     xlim = [tmin, tmax]
     # create figure
-    fig = plt.figure(figsize=(9, 5), dpi=200)
+    fig, axes = plt.subplots(figsize=(18, 9), dpi=200)
+    # set date format to x-axis tick labels
+    axes.xaxis.set_major_formatter(DateFormatter('%H:%M:%S'))
+    # show axis grids
+    plt.grid(which='both', axis='x')
     # set x-axis limits
-    plt.gca().set_xlim(xlim)
+    axes.set_xlim(xlim)
     # show catalogue events
-    evt_lst = isn_client.get_events(starttime=xlim[0], endtime=xlim[1])
+    evt_loc = isn_client.get_events(starttime=xlim[0], endtime=xlim[1])
     # explosions counter
     n_exp = 0
-    for event in evt_lst:
-        # origin time
-        tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
+    for event in evt_loc:
         # normalised x-axis coordinate (because of problems with datetimes and JSON)
-        xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+        xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
         if event.magnitudes:
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime], [0, len(stream)+1], color='red', linewidth=2, alpha=.5)
             # display event type & magnitude
             plt.text(xpos, 1.01, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='red', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+                     color='red', fontsize=8, ha='center', va='bottom', clip_on=False, transform=axes.transAxes)
         else:
             n_exp += 1
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime], [0, len(stream)+1], color='green', linewidth=2, alpha=.5)
             # display event type
-            plt.text(xpos, 1.03, 'EXP', color='green', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
-    # show EMSC events
+            plt.text(xpos, 1.03, 'EXP', color='green', fontsize=8, ha='center', va='bottom', clip_on=False, transform=axes.transAxes)
+    # FDSN client for  EMSC events
     tele_client = Client('EMSC')
     # M>5 teleseismic events catalogue
-    evt_lst1 = []
+    evt_tel = []
     try:
-        evt_lst1 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=5)
+        evt_tel = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=5)
     except:
         print(' No M>5 teleseismic events')
-    if evt_lst1:
-        for event in evt_lst1:
-            # origin time
-            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
-            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+    if evt_tel:
+        for event in evt_tel:
+            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
+                if len(evt_tel) > 1:
+                    e1 = evt_tel.filter(f"time < {datetime.strftime(stream[0].stats.origin_time - timedelta(minutes=1), '%Y-%m-%dT%H:%M')}")
+                    e2 = evt_tel.filter(f"time > {datetime.strftime(stream[0].stats.origin_time + timedelta(minutes=1), '%Y-%m-%dT%H:%M')}")
+                    for e in e2:
+                        e1.append(e)
+                    evt_tel = e1
+                    del e2
+                else:
+                    evt_tel = []
                 continue
             # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime], [0, len(stream)+1], color='purple', linewidth=2, alpha=.5)
             # display event type & magnitude
-            plt.text(xpos, 1.07, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='purple', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+            plt.text(xpos, 1.07, f"M{event.preferred_magnitude().mag:3.1f}", color='purple', fontsize=8, ha='center', va='bottom', clip_on=False, transform=axes.transAxes)
     # M>3 regional events catalogue
-    evt_lst2 = []
+    evt_reg = []
     try:
-        evt_lst2 = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=3, minlatitude=23, maxlatitude=43, minlongitude=20, maxlongitude=50)
+        evt_reg = tele_client.get_events(starttime=xlim[0], endtime=xlim[1], minmagnitude=3, minlatitude=23, maxlatitude=43, minlongitude=20, maxlongitude=50)
     except:
         print('No M>3 regional events')
-    if evt_lst2:
-        for event in evt_lst2:
-            # origin time
-            tori = datetime.strptime(str(event.preferred_origin().time), '%Y-%m-%dT%H:%M:%S.%fZ')
-            if abs((tori-stream[0].stats.origin_time).total_seconds()) < 60.:
+    if evt_reg:
+        for event in evt_reg:
+            if abs((event.preferred_origin().time.datetime-stream[0].stats.origin_time).total_seconds()) < 60.:
+                if len(evt_reg) > 1:
+                    e1 = evt_reg.filter(f"time < {datetime.strftime(stream[0].stats.origin_time - timedelta(minutes=1), '%Y-%m-%dT%H:%M')}")
+                    e2 = evt_reg.filter(f"time > {datetime.strftime(stream[0].stats.origin_time + timedelta(minutes=1), '%Y-%m-%dT%H:%M')}")
+                    for e in e2:
+                        e1.append(e)
+                    evt_reg = e1
+                    del e2
+                else:
+                    evt_reg = []
                 continue
             # normalised x-axis coordinate (because of problems with datetimes and JSON)
-            xpos = (tori-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
+            xpos = (event.preferred_origin().time.datetime-xlim[0]).total_seconds() / (xlim[1]-xlim[0]).total_seconds()
             # plot marker
-            plt.plot([tori, tori], [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
+            plt.plot([event.preferred_origin().time.datetime, event.preferred_origin().time.datetime], [0, len(stream)+1], color='orange', linewidth=2, alpha=.5)
             # display event type & magnitude
-            plt.text(xpos, 1.05, f"M{event.preferred_magnitude().mag:3.1f}",
-                     color='orange', fontsize=10, ha='center', va='bottom', clip_on=False, transform=plt.gca().transAxes)
+            plt.text(xpos, 1.05, f"M{event.preferred_magnitude().mag:3.1f}", color='orange', fontsize=8, ha='center', va='bottom', clip_on=False, transform=axes.transAxes)
     # display total number of stations
-    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(-.01, 1., f"Ns={len(stream)}", ha='right', va='bottom', fontsize=8, transform=axes.transAxes)
     # display total number of local events
-    plt.text(1.01, 1.01, f"Nl={len(evt_lst)-n_exp}", ha='left', va='bottom', color='red', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.01, f"Nl={len(evt_loc) - n_exp}", ha='left', va='bottom', color='red', fontsize=8, transform=axes.transAxes)
     # display total number of blasts
-    plt.text(1.01, 1.03, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.03, f"Nx={n_exp}", ha='left', va='bottom', color='green', fontsize=8, transform=axes.transAxes)
     # display total number of regional events
-    plt.text(1.01, 1.05, f"Nr={len(evt_lst2)}", ha='left', va='bottom', color='orange', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.05, f"Nr={len(evt_reg)}", ha='left', va='bottom', color='orange', fontsize=8, transform=axes.transAxes)
     # display total number of teleseismic events
-    plt.text(1.01, 1.07, f"Nt={len(evt_lst1)}", ha='left', va='bottom', color='purple', fontsize=10, fontweight='bold', transform=plt.gca().transAxes)
+    plt.text(1.01, 1.07, f"Nt={len(evt_tel)}", ha='left', va='bottom', color='purple', fontsize=8, transform=axes.transAxes)
+    # list number of autopicks per station
+    plst = [len(wf.stats.auto_tt) for wf in isn_traces if hasattr(wf.stats, 'auto_tt')]
     # initialise counter
     n_trace = 0
     # loop over stream channels
@@ -625,37 +640,42 @@ def plot_autopick_cont_sec(stream, win_tab, fig_name=None):
         plt.plot(t_vec, trace.data/trace.max() + n_trace, color='grey', alpha=.7, label='Velocity')
         if hasattr(trace.stats, 'auto_tt'):
             # number of picks per station
-            if len(trace.stats.auto_tt) > 10:
+            # if len(trace.stats.auto_tt) > (len(evt_loc.filter('magnitude > 3')) + len(evt_reg)):
+            if len(trace.stats.auto_tt) > np.nanmean(plst)+2.5*np.nanstd(plst):
                 # show number of picks
                 plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
-                         color='red', fontsize=10, clip_on=False, ha='left', va='center', transform=plt.gca().transAxes)
+                         color='red', fontsize=5, clip_on=False, ha='left', va='center', transform=axes.transAxes)
                 # show station/channel name
                 plt.text(-.01, n_trace/(len(stream)+1), f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
-                         color='red', fontsize=10, clip_on=False, ha='right', va='center', transform=plt.gca().transAxes)
+                         color='red', fontsize=5, clip_on=False, ha='right', va='center', transform=axes.transAxes)
             else:
                 # show number of picks
                 plt.text(1.01, n_trace/(len(stream)+1), f"Np={len(trace.stats.auto_tt)}",
-                         color='blue', fontsize=10, clip_on=False, ha='left', va='center', transform=plt.gca().transAxes)
+                         fontsize=5, clip_on=False, ha='left', va='center', transform=axes.transAxes)
                 # show station/channel name
                 plt.text(-.01, n_trace/(len(stream)+1), f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
-                         color='blue', fontsize=10, clip_on=False, ha='right', va='center', transform=plt.gca().transAxes)
+                         fontsize=5, clip_on=False, ha='right', va='center', transform=axes.transAxes)
             for at in trace.stats.auto_tt:
                 plt.plot([at, at], [n_trace-.5, n_trace+.5], color='blue', label='Autopick')
+        else:
+            # show station/channel name
+            plt.text(-.01, n_trace/(len(stream)+1), f"{trace.stats.network}.{trace.stats.station}.{trace.stats.location}.{trace.stats.channel}",
+                     fontsize=5, clip_on=False, ha='right', va='center', transform=axes.transAxes)
     # 30-s time windows with >6 picks
     for win in win_tab:
-        plt.gca().fill_betweenx([0, n_trace+1], win-timedelta(minutes=2.5), win+timedelta(minutes=2.5), color='red', alpha=.5)
+        axes.fill_betweenx([0, n_trace+1], win-timedelta(minutes=2.5), win+timedelta(minutes=2.5), color='green', alpha=.5)
     # set y-axis limits
-    plt.gca().set_ylim([0, n_trace+1])
+    axes.set_ylim([0, n_trace+1])
     # remove y-axis tick labels
-    plt.gca().set_yticklabels([])
+    axes.set_yticklabels([])
     # set x-axis font size
-    plt.gca().tick_params(axis='x', which='major', labelsize=10)
-    # save figure
-    fid = open(fig_name, 'w')
-    mpld3.save_html(fig, fid)
-    print(f" Figure saved: {fig_name}")
-    plt.close()
-    fid.close()
+    axes.tick_params(axis='x', which='major', labelsize=10)
+    # show or save figure
+    if fig_name:
+        plt.savefig(fig_name, bbox_inches='tight', dpi='figure')
+        plt.close()
+    else:
+        plt.show()
     return
 
 
@@ -965,7 +985,7 @@ if if_res:
             evt_lbl.append(f"{evt:16s} | M{xmag[ie]:3.1f} | {xdis[ie]:6.2f} km")
             # highlight distant events
             if j == 0 and xdis[ie] > 400.:
-                ax.plot([ax.get_xlim()[0]-.5, ax.get_xlim()[0]-4.5], [ie+.7, ie+.7], 'r', clip_on=False)
+                ax.plot([ax.get_xlim()[0]-.5, ax.get_xlim()[0]-4.5], [ie+.7, ie+.7], color='red', clip_on=False)
             if tdif[evt] is None:
                 # mark empty events with red cross
                 ax.plot(0., ie+1, 'xr', markersize=10, linewidth=2)
@@ -1073,6 +1093,8 @@ if if_plot:
             ext = '10h'
         # read event parameters
         evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
+        # if evt != '20210615230854375' and evt != '20220122220957402':
+        #     continue
         if evt == '20210617215634852' or evt == '20211027045305932':
             continue
         epar = {'evid': erow.EventID, 'elat': erow.Latitude, 'elon': erow.Longitude, 'edep': erow.Depth,
@@ -1080,18 +1102,18 @@ if if_plot:
         print(f"{evt} M{epar['emag']:3.1f}")
         # check whether figure and output file already exist or not
         if pic == 'AIC':
-            oxml = f"{evt}_{exp}_AIC.{ext}.xml"
+            oxml = f"{evt}_{exp}_AIC_{ext}.xml"
         else:
             oxml = f"{evt}_{exp}.{ext}.xml"
-        if (ext == '10m' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") != 0 and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") != 0) or\
-                (ext == '10h' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") != 0):
+        # check if figures needs to be plotted
+        if (ext == '10m' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.txt')}") != 0 and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") != 0) or\
+                (ext == '10h' and path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") != 0):
             print()
             continue
-
         #######################################################################################################################
         # RETRIEVE AUTOMATIC PICKS
         # load waveform data to plot (not .raw.mseed)
-        isn_traces = read(f"{wdir}/{idat}/{evt}.{ext}.mseed")
+        isn_traces = read(f"{wdir}/{idat}/{evt}_{ext}.mseed")
         # read output file
         if pic == 'AIC':
             isn_traces, na = read_autopick_xml(f"{wdir}/{idat}/{oxml}", isn_traces, 'P', 'AIC')
@@ -1121,9 +1143,12 @@ if if_plot:
 
         #######################################################################################################################
         # MORE DATA PROCESSING (FOR PLOTTING ONLY)
-        # remove traces with <2 automatic picks (assuming first pick is for event)
         for t in isn_traces:
-            if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 2 or (not hasattr(t.stats, 'auto_tt')):
+            # # remove traces with no automatic picks
+            # if hasattr(t.stats, 'auto_tt') and len(t.stats.auto_tt) < 1 or (not hasattr(t.stats, 'auto_tt')):
+            #     isn_traces.remove(t)
+            # remove Meiron array
+            if (re.search('MMA', t.stats.station) and t.stats.station != 'MMA0B') or re.search('MMB', t.stats.station) or re.search('MMC', t.stats.station):
                 isn_traces.remove(t)
         # apply taper to all traces
         isn_traces.taper(max_percentage=.5, type='cosine', max_length=fpar['taper'], side='left')
@@ -1184,8 +1209,8 @@ if if_plot:
         for tr in isn_traces:
             tr.stats['origin_time'] = epar['eori']
         # only if figure does not already exist
-        if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}") == 0:
+        if path.exists(f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}") == 0:
             print(f' {len(isn_traces)} waveforms to plot')
-            plot_autopick_cont_sec(isn_traces, wtab, f"{wdir}/{idat}/{oxml.replace('.xml', '.html')}")
+            plot_autopick_cont_sec(isn_traces, wtab, f"{wdir}/{idat}/{oxml.replace('.xml', '.png')}")
         isn_traces = None
         print()

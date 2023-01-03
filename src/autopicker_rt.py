@@ -245,7 +245,7 @@ def plot_autopick_evt_sec(stream, auto_tab, cat_tab, evt_param, filt_param, fig_
     m.drawmapboundary(fill_color='none')
     # fill continents
     m.fillcontinents(color='0.8', lake_color='white')
-    # show parallels and meridians (labels = [left,right,top,bottom])
+    # show parallels and meridians (labels=[left,right,top,bottom])
     m.drawparallels(np.arange(m.llcrnrlat, m.urcrnrlat + 1, 2.), labels=[True, False, True, False])
     m.drawmeridians(np.arange(m.llcrnrlon, m.urcrnrlon + 1, 2.), labels=[True, False, False, True])
     # faults
@@ -528,7 +528,7 @@ else:
 isn_inv = read_inventory(f"{wdir}/inventory.xml", format='STATIONXML')
 
 # list events since 2022-10-26 (activation of autopicker)
-evt_lst = isn_client.get_events(starttime=UTCDateTime(datetime.strptime('2022-10-26 00:00:00', '%Y-%m-%d %H:%M:%S')),
+evt_lst = isn_client.get_events(starttime=UTCDateTime(datetime.strptime('2022-11-29 00:00:00', '%Y-%m-%d %H:%M:%S')),
                                 endtime=UTCDateTime(datetime.now()),
                                 includearrivals=True, orderby='time-asc')
 # event time window

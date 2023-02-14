@@ -480,7 +480,6 @@ def plot_autopick_evt_sec(stream, event_cata, fig_name=None):
             # table for residuals (for statistics)
             sres_tab.append((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds())
             # residual plot
-            print((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds())
             axis2.plot((trace.stats.auto_tts[k_apics] - trace.stats.cata_tts[0]).total_seconds(),
                        n_trace, '^', markersize=5, mfc='orange', mec='none', alpha=.7)
         # residual w.r.t. theoretical pick (if automatic pick exists)
@@ -711,7 +710,7 @@ twin = timedelta(minutes=5)
 
 ########################################################################################################################
 # DATA PROCESSING
-if_proc = False
+if_proc = True
 if if_proc:
     # loop over events
     for _, erow in etab.iterrows():
@@ -720,6 +719,8 @@ if if_proc:
                                                   '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
         # if evt == '20210617215634852' or evt == '20211027045305932':
         #     continue
+        if evt != '20210831091847474':
+            continue
         evt_cata = isn_client.get_events(eventid=erow.EventID)[0]
         print(f"{evt} M{evt_cata.preferred_magnitude().mag:3.1f}")
 
@@ -765,7 +766,9 @@ if if_plot:
         # read event parameters
         evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''),
                                                   '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
-        if evt == '20210617215634852' or evt == '20211027045305932':
+        # if evt == '20210617215634852' or evt == '20211027045305932':
+        #     continue
+        if evt != '20210831091847474':
             continue
         evt_cata = isn_client.get_events(eventid=erow.EventID)[0]
         print(f"{evt} M{evt_cata.preferred_magnitude().mag:3.1f}")

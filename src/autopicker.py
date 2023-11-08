@@ -767,7 +767,7 @@ if if_spe:
     elon = 35.60145
     edep = 5.
     emag = 3.2
-    # evt = '20210615230854375'
+    # epic = '20210615230854375'
     # eid = 'gsi202106152307'
     # elat = 30.09941
     # elon = 35.17768
@@ -788,7 +788,7 @@ if if_spe:
             continue
         else:
             tr1 = tr1[0]
-        # if path.exists(f'{wdir}/{idat}/{evt}/{tr1.stats.network}.{stn}.{chn}.png') != 0:
+        # if path.exists(f'{wdir}/{idat}/{epic}/{tr1.stats.network}.{stn}.{chn}.png') != 0:
         #     continue
         # theoretical arrival
         st = isn_inv.select(station=stn, channel=chn)
@@ -860,7 +860,7 @@ if if_spe:
         # # adjustments
         # # plt.get_current_fig_manager().full_screen_toggle()
         # # plt.show()
-        # plt.savefig(f'{wdir}/{idat}/{evt}/{tr1.stats.network}.{stn}.{chn}.png', bbox_inches='tight', dpi='figure')
+        # plt.savefig(f'{wdir}/{idat}/{epic}/{tr1.stats.network}.{stn}.{chn}.png', bbox_inches='tight', dpi='figure')
         # plt.close()
     ########################
     # EVENT SUMMARY FIGURE #
@@ -1093,7 +1093,7 @@ if if_plot:
             ext = '10h'
         # read event parameters
         evt = datetime.strftime(datetime.strptime(str(erow.OriginTime).replace('+00:00', ''), '%Y-%m-%d %H:%M:%S.%f'), '%Y%m%d%H%M%S%f')[:-3]
-        # if evt != '20210615230854375' and evt != '20220122220957402':
+        # if epic != '20210615230854375' and epic != '20220122220957402':
         #     continue
         if evt == '20210617215634852' or evt == '20211027045305932':
             continue

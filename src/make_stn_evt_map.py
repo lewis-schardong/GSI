@@ -33,7 +33,7 @@ etab = pd.read_csv(f"{wdir}/autopicker-pb/01-06-2021_01-06-2022_M3.csv", parse_d
 
 # output file name
 fig_name = ''
-# fig_name = '/home/lewis/autopicker-rt/map-evt-stn.png'
+# fig_name = '/home/lewis/autopicker-rt/map-epic-stn.png'
 if fig_name:
     mpl.use('Agg')
 # create figure & axes

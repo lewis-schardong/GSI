@@ -799,20 +799,20 @@ if if_plot:
         else:
             print(f" {na} automatic picks")
         # # create DataFrame with automatic picks for time window analysis
-        # atab = pd.DataFrame({'net': pd.Series(dtype='string'), 'stn': pd.Series(dtype='string'),
+        # itab = pd.DataFrame({'net': pd.Series(dtype='string'), 'stn': pd.Series(dtype='string'),
         #                      'loc': pd.Series(dtype='string'), 'chn': pd.Series(dtype='string'),
         #                      'pick': pd.Series(dtype='datetime64[ms]')})
         # for t in isn_traces:
         #     if hasattr(t.stats, 'auto_tt'):
         #         for p in t.stats.auto_tt:
-        #             atab.loc[atab.shape[0]] = [t.stats.network, t.stats.station, t.stats.location, t.stats.channel, p]
+        #             itab.loc[itab.shape[0]] = [t.stats.network, t.stats.station, t.stats.location, t.stats.channel, p]
         # # initialise table to contain 30-s time windows with >6 picks
         # wtab = []
         # # look for 30-s time windows with >6 picks
         # tper = pd.date_range(evt_cata.preferred_origin().time.datetime-twin,
         #                      evt_cata.preferred_origin().time.datetime+twin, freq='30S').to_list()
         # for i in range(len(tper)-1):
-        #     tab = atab.loc[(atab.pick > tper[i]) & (atab.pick <= tper[i+1])]
+        #     tab = itab.loc[(itab.pick > tper[i]) & (itab.pick <= tper[i+1])]
         #     if not tab.empty and len(tab) > 5:
         #         wtab.append(tper[i])
 

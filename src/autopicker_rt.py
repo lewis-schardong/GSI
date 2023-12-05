@@ -1,5 +1,4 @@
 import os
-from os import path
 import re
 import logging
 import matplotlib.pyplot as plt
@@ -62,7 +61,7 @@ def get_waveforms_deci(mpath, ori_time, time_win, networks, channels, db_dir):
     :param db_dir: path to database directory from which to request waveform data
     :return: nothing
     """
-    if path.exists(mpath) == 0:
+    if os.path.exists(mpath) == 0:
         # define start and end times for data retrieval
         tbeg = str(datetime.strftime(ori_time - time_win, '%Y-%m-%d %H:%M:%S'))
         tend = str(datetime.strftime(ori_time + time_win, '%Y-%m-%d %H:%M:%S'))
@@ -251,7 +250,7 @@ def read_autopick_xml(year, month, stream, work_dir):
         tper = ''
     # create .xml file if missing
     netsta = f"{stream.split('.')[0]}.{stream.split('.')[1]}"
-    if path.exists(f'{work_dir}/{year}-{month:02d}/picks/{netsta}.xml') == 0:
+    if os.path.exists(f'{work_dir}/{year}-{month:02d}/picks/{netsta}.xml') == 0:
         os.system(f"dump_picks -t '{tper}' -n --net-sta {netsta} -o {work_dir}/{year}-{month:02d}/picks/{netsta}.xml")
     # initialise picks table
     pick_tab = pd.DataFrame({'Stream': pd.Series(dtype='string'), 'Phase': pd.Series(dtype='string'),
@@ -409,11 +408,11 @@ def prepare_tables(stream, cat_evt, auto_list, work_dir):
         xml_path = f"{work_dir}/{datetime.strftime(cat_evt.preferred_origin().time.datetime, '%Y-%m')}" \
                    f"/{auto_evt}.xml"
         # checking false/ directory if not in monthly directory
-        if path.exists(xml_path) == 0:
+        if os.path.exists(xml_path) == 0:
             xml_path = f"{work_dir}/{datetime.strftime(cat_evt.preferred_origin().time.datetime, '%Y-%m')}" \
                        f"/false/{auto_evt}.xml"
         # retrieving event .xml file if not found anywhere
-        if path.exists(xml_path) == 0:
+        if os.path.exists(xml_path) == 0:
             os.system(f"scxmldump -E {auto_evt} -PAMFf -o {xml_path}")
         # reading event .xml file
         auto_xml = read_events(xml_path).events[0]
@@ -1224,7 +1223,7 @@ def list_auto_events(year, month, day1, work_dir):
             print(list2)
             exit()
         # check False directory exists
-        if path.exists(f'{work_dir}/{year}-{month:02d}/false') == 0:
+        if os.path.exists(f'{work_dir}/{year}-{month:02d}/false') == 0:
             os.mkdir(f'{work_dir}/{year}-{month:02d}/false')
         # loop over True detections
         for _, true in true_auto.iterrows():
@@ -1232,7 +1231,7 @@ def list_auto_events(year, month, day1, work_dir):
             if ',' in true.AutoID:
                 true.AutoID = true.AutoID.split(',')[0]
             # read event .xml file
-            if path.exists(f'{work_dir}/{year}-{month:02d}/{true.AutoID}.xml') == 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/{true.AutoID}.xml') == 0:
                 os.system(f'scxmldump -E {true.AutoID} -PAMFf -o {work_dir}/{year}-{month:02d}/false/{true.AutoID}.xml')
             auto = read_events(f'{work_dir}/{year}-{month:02d}/{true.AutoID}.xml')
             # check preferred origin exists
@@ -1279,8 +1278,8 @@ def list_auto_events(year, month, day1, work_dir):
         # loop over False detections
         for event in auto_false:
             # read event .xml file
-            if path.exists(f'{work_dir}/{year}-{month:02d}/false/{event}.xml') == 0:
-                if path.exists(f'{work_dir}/{year}-{month:02d}/{event}.xml') != 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/false/{event}.xml') == 0:
+                if os.path.exists(f'{work_dir}/{year}-{month:02d}/{event}.xml') != 0:
                     os.rename(f'{work_dir}/{year}-{month:02d}/{event}.xml',
                               f'{work_dir}/{year}-{month:02d}/false/{event}.xml')
                 else:
@@ -1304,8 +1303,8 @@ def list_auto_events(year, month, day1, work_dir):
         # loop over non-False detections (automatic True event detections without catalogue match)
         for event in not_false:
             # read event .xml file
-            if path.exists(f'{work_dir}/{year}-{month:02d}/false/{event}.xml') == 0:
-                if path.exists(f'{work_dir}/{year}-{month:02d}/{event}.xml') != 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/false/{event}.xml') == 0:
+                if os.path.exists(f'{work_dir}/{year}-{month:02d}/{event}.xml') != 0:
                     os.rename(f'{work_dir}/{year}-{month:02d}/{event}.xml',
                               f'{work_dir}/{year}-{month:02d}/false/{event}.xml')
                 else:
@@ -1347,7 +1346,7 @@ def check_missed_events(year, month, day1, work_dir):
     # retrieve station inventory
     isn_inv = isn_client.get_stations(network='IS,GE', channel='ENZ,HHZ,BHZ,SHZ', level='response')
     # logging file
-    if path.exists(f"{work_dir}/{year}-{month:02d}/missed_{year}-{month:02d}.log") != 0:
+    if os.path.exists(f"{work_dir}/{year}-{month:02d}/missed_{year}-{month:02d}.log") != 0:
         os.remove(f"{work_dir}/{year}-{month:02d}/missed_{year}-{month:02d}.log")
     logger = my_custom_logger(f"{work_dir}/{year}-{month:02d}/missed_{year}-{month:02d}.log", level=logging.DEBUG)
     # loop over each day because in February too much events for FDSN server
@@ -1424,7 +1423,7 @@ def check_missed_events(year, month, day1, work_dir):
                 levt = []
             # PREPARING WAVEFORMS
             mfile = f"{work_dir}/{year}-{month:02d}/{evid}.mseed"
-            if path.exists(mfile) == 0:
+            if os.path.exists(mfile) == 0:
                 # longer time window for triggers > 1,200 km from center of ISN
                 if gdist.distance((31.5, 35.), (evt.preferred_origin().latitude,
                                                 evt.preferred_origin().longitude)).km > 1200.:
@@ -1467,8 +1466,8 @@ def check_false_events(year, month, day1, work_dir):
                         f'{year}/{month:02d}/{day:02d} 00:00:00', '%Y/%m/%d %H:%M:%S')) + timedelta(days=1))]
         for _, frow in xtab.iterrows():
             # read .xml event file
-            if path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.xml') == 0:
-                if path.exists(f'{work_dir}/{year}-{month:02d}/{frow.AutoID}.xml') != 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.xml') == 0:
+                if os.path.exists(f'{work_dir}/{year}-{month:02d}/{frow.AutoID}.xml') != 0:
                     os.rename(f'{work_dir}/{year}-{month:02d}/{frow.AutoID}.xml',
                               f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.xml')
                 else:
@@ -1485,7 +1484,7 @@ def check_false_events(year, month, day1, work_dir):
                   f"{datetime.strftime(axml.events[0].preferred_origin().time.datetime, '%d/%m/%Y %H:%M:%S.%f')} "
                   f"(M{mag:3.1f})")
             # skip if figure exists
-            if path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.png') != 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.png') != 0:
                 print(' Figure already exists')
                 print()
                 continue
@@ -1496,7 +1495,7 @@ def check_false_events(year, month, day1, work_dir):
             else:
                 win = wwin
             # retrieve .mseed waveforms if necessary
-            if path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.mseed') == 0:
+            if os.path.exists(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.mseed') == 0:
                 get_waveforms_deci(f'{work_dir}/{year}-{month:02d}/false/{frow.AutoID}.mseed',
                                    axml.events[0].preferred_origin().time.datetime, win, ntw, '(B|H|E|S)(H|N)Z', adir)
             # retrieve processed waveforms
@@ -1752,13 +1751,13 @@ def plot_picks_histograms(detec_type, phase, work_dir):
     :return: nothing
     """
     # read picks table
-    if path.exists(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2022, 12, work_dir)
     tab1 = pd.read_csv(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
-    if path.exists(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2023, 1, work_dir)
     tab2 = pd.read_csv(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
-    if path.exists(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2023, 2, work_dir)
     tab3 = pd.read_csv(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
     # add-up tables
@@ -1820,7 +1819,7 @@ def plot_picks_ratios(work_dir):
     """
     # n_true/n_unassoc limit for plotting
     slim = .0005
-    if path.exists(f'{work_dir}/pick-number-ratios-all.csv') == 0:
+    if os.path.exists(f'{work_dir}/pick-number-ratios-all.csv') == 0:
         # create table for all picks
         all_tab = pd.DataFrame({'Stream': pd.Series(dtype='string'), 'n_true': pd.Series(dtype='int64'),
                                 'n_all': pd.Series(dtype='int64'), 'pick_ratio': pd.Series(dtype='float64')})
@@ -1907,13 +1906,13 @@ def plot_snr_histograms(detec_type, phase, work_dir):
     # xlim = 800.
     # ylim = 30.
     # read picks table
-    if path.exists(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2022, 12, work_dir)
     tab1 = pd.read_csv(f'{work_dir}/2022-12/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
-    if path.exists(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2023, 1, work_dir)
     tab2 = pd.read_csv(f'{work_dir}/2023-01/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
-    if path.exists(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv') == 0:
+    if os.path.exists(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv') == 0:
         write_picks_table(detec_type, phase, 2023, 2, work_dir)
     tab3 = pd.read_csv(f'{work_dir}/2023-02/picks-{phase}-{detec_type}.csv', parse_dates=['PickTime'])
     # add-up tables

@@ -10,6 +10,53 @@ from datetime import datetime
 from obspy.clients.fdsn import Client
 
 
+def plot_map_m28(tab):
+    """
+    :param tab: DataFrame containing automatic and catalogue event parameters
+    :return: nothing
+    """
+    # create figure
+    fig, ax1 = plt.subplots(nrows=1, ncols=1, squeeze=True, figsize=(18, 9), dpi=200)
+    # define map boundaries & resolution
+    m1 = Basemap(projection='cyl', llcrnrlon=lmap[2], llcrnrlat=lmap[0],
+                 urcrnrlon=lmap[3], urcrnrlat=lmap[1], resolution='i', ax=ax1)
+    # draw map
+    m1.drawmapboundary(fill_color='none')
+    # fill continents
+    m1.fillcontinents(color='0.8', lake_color='white')
+    # faults
+    flts_id = open(f"/home/{os.environ['LOGNAME']}/.seiscomp/bna/ActiveFaults/activefaults.bna", 'r')
+    flts = flts_id.readlines()
+    flts_id.close()
+    flt = []
+    for iii in range(len(flts)):
+        if re.search('"', flts[iii]):
+            flt = pd.DataFrame({'lat': pd.Series(dtype='float64'), 'lon': pd.Series(dtype='float64')})
+        elif iii < len(flts) - 1 and re.search('"', flts[iii + 1]):
+            ax1.plot(flt.lon, flt.lat, c='black', linewidth=.1, zorder=1)
+        else:
+            l_line = flts[iii].split(',')
+            flt.loc[flt.shape[0]] = [float(l_line[1]), float(l_line[0])]
+    # plot detected events
+    h1 = ax1.scatter(tab[~pd.isna(tab.Auto_ID)].Cat_Lon, tab.Cat_Lat[~pd.isna(tab.Auto_ID)], s=25,
+                     c=tab.Cat_M[~pd.isna(tab.Auto_ID)], label=f'True ({len(tab.Cat_Lat[~pd.isna(tab.Auto_ID)])})',
+                     alpha=.7, cmap='hot', vmin=2.8, vmax=4.)
+    # plot missed events
+    h2 = ax1.scatter(tab.Cat_Lon[pd.isna(tab.Auto_ID)], tab.Cat_Lat[pd.isna(tab.Auto_ID)], s=25,
+                     c=tab.Cat_M[pd.isna(tab.Auto_ID)], label=f'Missed ({len(tab.Cat_Lat[pd.isna(tab.Auto_ID)])})',
+                     marker='x', alpha=.7, cmap='hot', vmin=2.8, vmax=4.)
+    # colour bar
+    cbar = plt.colorbar(h1, ax=ax1, location='left', orientation='vertical', label='Magnitude') #, fraction=.05, pad=.05)
+    cbar.ax.tick_params(labelsize=8)
+    # legend
+    ax1.legend(handles=[h1, h2], loc='lower left', fontsize=8)
+    # maximise figure
+    plt.get_current_fig_manager().full_screen_toggle()
+    # show figure
+    plt.show()
+    return
+
+
 def plot_map_auto(tab):
     """
     :param tab: DataFrame containing automatic and catalogue event parameters
@@ -429,11 +476,22 @@ def plot_maps_detec(tab, zones, lim1, lim2, lim3):
     return
 
 
+# magnitude limits
+lim3 = 1.0
+lim2 = 2.0
+lim1 = 2.8
+# geographical boundaries
+lmap = [27., 36., 32., 38.]
+rmap = [11., 51., 15., 55.]
+# in-net seismogenic zones
+izon = ['Arava', 'Arif fault', 'Barak fault', 'Carmel Tirza', 'Central Israel', 'Dead Sea Basin', 'East Shomron',
+        'Eilat Deep', 'Galilee', 'Gaza', 'HaSharon', 'Hula Kinneret', 'Jordan Valley', 'Judea Samaria', 'Negev',
+        'Paran', 'West Malhan']
 # working directory
 wdir = '/mnt/c/Users/lewiss/Documents/Research/Autopicker'
 
 # read input table
-itab = pd.read_csv(f'{wdir}/autopicker_M2.8_5.7_28.11.csv', parse_dates=['Auto Date Time', 'Cat Date Time'])
+itab = pd.read_csv(f'{wdir}/autopicker_M2.8_5.7_4.12.csv', parse_dates=['Auto Date Time', 'Cat Date Time'])
 # replace blanks with '_' in column names
 itab.columns = itab.columns.str.replace(' ', '_')
 # replace missing magnitude(s) ('-') with nans and convert to floats
@@ -448,6 +506,9 @@ itab.Cat_Lon = itab.Cat_Lon.astype(float)
 dble = itab[~pd.isna(itab.Cat_Type) & itab.Cat_Type.str.match('D') & itab.Cat_ID.str.contains('gsi')].Cat_ID.to_list()
 # prepare event table of automatic events
 atab = itab[~pd.isna(itab.Auto_M)]
+# prepare event table for M>2.8 map
+stab = itab[~pd.isna(itab.Cat_M) & ~pd.isna(itab.Cat_Lat) & (itab.Cat_Lat >= lmap[0]) & (itab.Cat_Lat <= lmap[1]) &
+            (itab.Cat_Lon >= lmap[2]) & (itab.Cat_Lon <= lmap[3]) & (itab.Cat_M >= lim1)]
 # prepare event table of detections
 otab = itab[itab.Cat_ID.str.contains('gsi') &
             ((itab.Cat_Type == 'EQ') | (itab.Cat_Type == 'F') | (itab.Cat_Type == 'EX'))].reset_index(drop=True)
@@ -484,20 +545,10 @@ otab = otab[((otab.Auto_Date_Time >= datetime.strptime('2023-09-20 12:00:00', '%
 # otab.to_csv(f'{wdir}/eq.csv')
 
 # FIGURES
-# magnitude limits
-lim3 = 1.0
-lim2 = 2.0
-lim1 = 2.8
-# geographical boundaries
-lmap = [27., 36., 32., 38.]
-rmap = [11., 51., 15., 55.]
-# in-net seismogenic zones
-izon = ['Arava', 'Arif fault', 'Barak fault', 'Carmel Tirza', 'Central Israel', 'Dead Sea Basin', 'East Shomron',
-        'Eilat Deep', 'Galilee', 'Gaza', 'HaSharon', 'Hula Kinneret', 'Jordan Valley', 'Judea Samaria', 'Negev',
-        'Paran', 'West Malhan']
-
-# plot automatic events map
-plot_map_auto(atab)
+# plot M>2.8 events map
+plot_map_m28(stab)
+# # plot automatic events map
+# plot_map_auto(atab)
 # # plot detection histograms
 # plot_hist_detec(otab, izon)
 # # plot detection maps
